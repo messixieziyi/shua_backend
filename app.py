@@ -45,68 +45,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship,
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Database
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 import os
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dev.db")
@@ -116,68 +56,8 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False
 class Base(DeclarativeBase):
     pass
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Enums
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 class RequestStatus(str, Enum):
     SUBMITTED = "SUBMITTED"
@@ -201,68 +81,8 @@ class MessageKind(str, Enum):
     USER = "user"
     SYSTEM = "system"
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Models
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 class User(Base):
     __tablename__ = "users"
@@ -328,68 +148,8 @@ class MessageRead(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     last_read_seq: Mapped[int] = mapped_column(BigInteger, default=0)
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Schemas
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 class RequestCreate(BaseModel):
     event_id: str
@@ -412,68 +172,8 @@ class MessageOut(BaseModel):
     created_at: dt.datetime
     seq: int
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Dependencies
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 def get_session():
     db = SessionLocal()
@@ -487,68 +187,8 @@ def get_user_id(x_user_id: str = Header(None)):
         raise HTTPException(401, "Missing X-User-Id header")
     return x_user_id
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Helpers
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 def _next_seq(session, thread_id: str) -> int:
     return session.execute(select(func.coalesce(func.max(Message.seq), 0) + 1).where(Message.thread_id == thread_id)).scalar_one()
@@ -561,68 +201,8 @@ async def system_message(session, thread_id: str, body: str):
     session.add(m)
     session.flush()
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Lifespan
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -632,104 +212,14 @@ async def lifespan(app: FastAPI):
     # Shutdown
     pass
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # FastAPI app
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 app = FastAPI(title="Meetup Chat & Booking API", version="0.4.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
-# Endpoints
+
 @app.get("/users")
 async def list_users(session=Depends(get_session)):
     """Get all users."""
@@ -759,7 +249,7 @@ async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), sessio
     """Create an RSVP for an event."""
     # For now, just return success - you can implement full RSVP logic later
     return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
+# Endpoints
 # ---------------------
 @app.post("/requests")
 async def create_request(payload: RequestCreate, user_id: str = Depends(get_user_id), session=Depends(get_session)):
@@ -840,68 +330,8 @@ async def seed_database(session=Depends(get_session)):
         "event_id": event_id
     }
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Smoke tests
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 async def _run_smoke_tests():
     from asgi_lifespan import LifespanManager
@@ -920,68 +350,8 @@ async def _run_smoke_tests():
             assert r.json()["status"] == "ACCEPTED"
             print("✅ Smoke tests passed!")
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Additional Schemas
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 class ThreadOut(BaseModel):
     id: str
@@ -1005,68 +375,8 @@ class ThreadListOut(BaseModel):
     threads: list[ThreadOut]
     participants: dict[str, list[ThreadParticipantOut]]  # thread_id -> participants
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # Chat Endpoints
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 @app.get("/threads", response_model=ThreadListOut)
 async def get_user_threads(user_id: str = Depends(get_user_id), session=Depends(get_session)):
@@ -1246,68 +556,8 @@ async def get_thread_participants(
         for p in participants
     ]
 
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 # WebSocket Manager
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
-
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 class ConnectionManager:
     def __init__(self):
