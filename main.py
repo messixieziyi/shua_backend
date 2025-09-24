@@ -248,6 +248,31 @@ async def list_users(session=Depends(get_session)):
     users = session.execute(select(User)).scalars().all()
     return [{"id": u.id, "display_name": u.display_name} for u in users]
 
+@app.post("/users")
+async def create_user(user_data: dict, session=Depends(get_session)):
+    """Create a new user."""
+    try:
+        display_name = user_data.get("display_name")
+        email = user_data.get("email")
+        
+        if not display_name:
+            raise HTTPException(status_code=400, detail="display_name is required")
+        
+        # Create new user
+        new_user = User(display_name=display_name, email=email)
+        session.add(new_user)
+        session.commit()
+        session.refresh(new_user)
+        
+        return {
+            "id": new_user.id,
+            "display_name": new_user.display_name,
+            "email": new_user.email
+        }
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
+
 @app.get("/events")
 async def list_events(session=Depends(get_session)):
     """Get all events (using event_id from requests)."""
