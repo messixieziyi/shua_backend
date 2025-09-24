@@ -112,6 +112,19 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(120))
     email: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
+class Event(Base):
+    __tablename__ = "events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    title: Mapped[str] = mapped_column(String(200))
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    starts_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    capacity: Mapped[int] = mapped_column(BigInteger, default=10)
+    activity_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    location: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+
 class Request(Base):
     __tablename__ = "requests"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -292,21 +305,77 @@ async def create_user(user_data: dict, session=Depends(get_session)):
 
 @app.get("/events")
 async def list_events(session=Depends(get_session)):
-    """Get all events (using event_id from requests)."""
-    # Get unique event_ids from requests
-    event_ids = session.execute(select(Request.event_id).distinct()).scalars().all()
-    events = []
-    for event_id in event_ids:
-        # Count requests for this event
-        request_count = session.execute(select(func.count(Request.id)).where(Request.event_id == event_id)).scalar()
-        events.append({
-            "id": event_id,
-            "title": f"Event {event_id[:8]}",
-            "description": f"Meetup event with {request_count} requests",
-            "capacity": 10,
-            "starts_at": "2024-01-01T10:00:00Z"
-        })
-    return events
+    """Get all events."""
+    events = session.execute(select(Event)).scalars().all()
+    return [
+        {
+            "id": event.id,
+            "title": event.title,
+            "description": event.description,
+            "capacity": event.capacity,
+            "starts_at": event.starts_at.isoformat(),
+            "activity_type": event.activity_type,
+            "location": event.location,
+            "address": event.address,
+            "created_by": event.created_by
+        }
+        for event in events
+    ]
+
+@app.post("/events")
+async def create_event(event_data: dict, user_id: str = Depends(get_user_id), session=Depends(get_session)):
+    """Create a new event."""
+    try:
+        title = event_data.get("title")
+        description = event_data.get("description")
+        starts_at_str = event_data.get("starts_at")
+        capacity = event_data.get("capacity", 10)
+        activity_type = event_data.get("activity_type")
+        location = event_data.get("location")
+        address = event_data.get("address")
+        created_by = event_data.get("created_by", user_id)
+        
+        if not title:
+            raise HTTPException(status_code=400, detail="title is required")
+        
+        if not starts_at_str:
+            raise HTTPException(status_code=400, detail="starts_at is required")
+        
+        # Parse the datetime
+        try:
+            starts_at = dt.datetime.fromisoformat(starts_at_str.replace('Z', '+00:00'))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid starts_at format")
+        
+        # Create new event
+        new_event = Event(
+            title=title,
+            description=description,
+            starts_at=starts_at,
+            capacity=capacity,
+            activity_type=activity_type,
+            location=location,
+            address=address,
+            created_by=created_by
+        )
+        session.add(new_event)
+        session.commit()
+        session.refresh(new_event)
+        
+        return {
+            "id": new_event.id,
+            "title": new_event.title,
+            "description": new_event.description,
+            "capacity": new_event.capacity,
+            "starts_at": new_event.starts_at.isoformat(),
+            "activity_type": new_event.activity_type,
+            "location": new_event.location,
+            "address": new_event.address,
+            "created_by": new_event.created_by
+        }
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create event: {str(e)}")
 
 @app.post("/rsvps")
 async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
