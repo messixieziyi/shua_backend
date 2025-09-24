@@ -688,12 +688,6 @@ async def list_events(session=Depends(get_session)):
         })
     return events
 
-@app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
-    # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
-
 # ---------------------
 app = FastAPI(title="Meetup Chat & Booking API", version="0.4.0", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
