@@ -649,7 +649,7 @@
                 users.forEach(user => {
                     const option = document.createElement('option');
                     option.value = user.id;
-                    option.textContent = `${user.full_name} (@${user.handle})`;
+                    option.textContent = `${user.display_name} (ID: ${user.id})`;
                     userSelect.appendChild(option);
                 });
 
@@ -658,7 +658,7 @@
                 users.forEach(user => {
                     const option = document.createElement('option');
                     option.value = user.id;
-                    option.textContent = `${user.full_name} (@${user.handle})`;
+                    option.textContent = `${user.display_name} (ID: ${user.id})`;
                     creatorSelect.appendChild(option);
                 });
 
@@ -887,7 +887,7 @@
                         user_id: currentUserId,
                         host_id: 1,
                         status: 'SUBMITTED',
-                        user_name: users.find(u => u.id == currentUserId)?.full_name || 'Unknown',
+                        user_name: users.find(u => u.id == currentUserId)?.display_name || 'Unknown',
                         event_title: events.find(e => e.id == currentEventId)?.title || 'Unknown Event'
                     };
                     requests.push(currentRequest);
@@ -1044,7 +1044,7 @@
             const groupedRequests = {};
             requests.forEach(request => {
                 const hostId = request.host_id || 1;
-                const hostName = users.find(u => u.id == hostId)?.full_name || `Organizer ${hostId}`;
+                const hostName = users.find(u => u.id == hostId)?.display_name || `Organizer ${hostId}`;
                 const eventName = events.find(e => e.id == request.event_id)?.title || `Event ${request.event_id}`;
                 
                 if (!groupedRequests[hostId]) {
@@ -1129,7 +1129,7 @@
                 eventDiv.className = 'event-item';
                 
                 const organizer = users.find(u => u.id == event.created_by);
-                const organizerName = organizer ? organizer.full_name : `User ${event.created_by}`;
+                const organizerName = organizer ? organizer.display_name : `User ${event.created_by}`;
                 
                 // Get participants from requests
                 const eventRequests = requests.filter(r => r.event_id == event.id && r.status === 'ACCEPTED');
