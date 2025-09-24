@@ -7,6 +7,7 @@ A complete meetup service backend with approval-based chat functionality, built 
 ### Core Files
 - `app.py` - Original FastAPI backend (basic version)
 - `app_final.py` - Complete FastAPI backend with full database schema
+- `app_production.py` - Production-ready version for Railway deployment
 - `simple_app.py` - Simplified working backend for testing
 - `split_interface_approval.html` - Main web interface with approval workflow
 
@@ -31,6 +32,9 @@ python simple_app.py
 
 # Complete version (full database)
 python app_final.py
+
+# Production version (Railway deployment)
+python app_production.py
 ```
 
 ### 3. Open Interface
@@ -69,6 +73,23 @@ Open `split_interface_approval.html` in your browser
 - `POST /dev/seed` - Seed database
 - Full database schema with relationships
 
+### Production App (`app_production.py`)
+- All endpoints from complete app
+- PostgreSQL support for Railway
+- Health check endpoint
+- Production optimizations
+
+## 🚀 Railway Deployment
+
+This project is configured for deployment on Railway with:
+- `requirements.txt` - Python dependencies
+- `railway.toml` - Railway configuration
+- `Procfile` - Process definition
+- `app_production.py` - Production-ready app
+- `.env.example` - Environment variables template
+
+See `DEPLOYMENT.md` for detailed deployment instructions.
+
 ## 🎮 How to Use
 
 1. **Start Server**: `python simple_app.py`
@@ -94,10 +115,11 @@ Open `split_interface_approval.html` in your browser
 
 ## 🛠️ Technical Stack
 
-- **Backend**: FastAPI, SQLAlchemy, SQLite
+- **Backend**: FastAPI, SQLAlchemy, SQLite/PostgreSQL
 - **Frontend**: HTML, CSS, JavaScript
-- **Database**: SQLite with relationships
+- **Database**: SQLite (local) / PostgreSQL (production)
 - **API**: RESTful endpoints
+- **Deployment**: Railway
 
 ## 🎯 Ready to Use!
 
