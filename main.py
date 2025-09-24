@@ -347,7 +347,7 @@ async def check_database(session=Depends(get_session)):
         session.execute(select(1))
         
         # Get table names
-        tables = session.execute(select("name").select_from("sqlite_master").where("type='table'")).scalars().all()
+        tables = session.execute(select("tablename").select_from("pg_tables").where("schemaname='public'")).scalars().all()
         
         return {
             "status": "connected",
