@@ -330,6 +330,33 @@ async def seed_database(session=Depends(get_session)):
         "event_id": event_id
     }
 
+@app.post("/dev/create-tables")
+async def create_tables(session=Depends(get_session)):
+    """Manually create all database tables."""
+    try:
+        Base.metadata.create_all(bind=engine)
+        return {"status": "success", "message": "Tables created successfully"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/dev/check-db")
+async def check_database(session=Depends(get_session)):
+    """Check database connection and show current tables."""
+    try:
+        # Test connection
+        session.execute(select(1))
+        
+        # Get table names
+        tables = session.execute(select("name").select_from("sqlite_master").where("type='table'")).scalars().all()
+        
+        return {
+            "status": "connected",
+            "database_url": DATABASE_URL,
+            "tables": list(tables)
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "database_url": DATABASE_URL}
+
 # ---------------------
 # Smoke tests
 # ---------------------
