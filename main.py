@@ -110,6 +110,7 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     display_name: Mapped[str] = mapped_column(String(120))
+    email: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
 class Request(Base):
     __tablename__ = "requests"
