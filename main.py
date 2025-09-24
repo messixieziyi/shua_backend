@@ -64,21 +64,15 @@ if DATABASE_URL.startswith("postgresql://"):
 print(f"🔗 Using database: {DATABASE_URL[:50]}...")
 
 # Create engine with connection pooling and retry logic
-try:
-    engine = create_engine(
-        DATABASE_URL, 
-        echo=False, 
-        future=True,
-        pool_pre_ping=True,  # Verify connections before use
-        pool_recycle=300,    # Recycle connections every 5 minutes
-        connect_args={"connect_timeout": 10} if DATABASE_URL.startswith("postgresql://") else {}
-    )
-    print("✅ Database engine created successfully")
-except Exception as e:
-    print(f"❌ Failed to create database engine: {e}")
-    print("🔄 Falling back to SQLite...")
-    DATABASE_URL = "sqlite:///./dev.db"
-    engine = create_engine(DATABASE_URL, echo=False, future=True)
+engine = create_engine(
+    DATABASE_URL, 
+    echo=False, 
+    future=True,
+    pool_pre_ping=True,  # Verify connections before use
+    pool_recycle=300,    # Recycle connections every 5 minutes
+    connect_args={"connect_timeout": 10} if DATABASE_URL.startswith("postgresql://") else {}
+)
+print("✅ Database engine created successfully")
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
 
 class Base(DeclarativeBase):
@@ -249,18 +243,6 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️  Database connection failed during startup: {e}")
         print("🔄 Application will continue - database will be initialized on first use")
-        
-        # Try to fallback to SQLite if PostgreSQL fails
-        if DATABASE_URL.startswith("postgresql://"):
-            print("🔄 Attempting fallback to SQLite...")
-            try:
-                global engine, SessionLocal
-                engine = create_engine("sqlite:///./dev.db", echo=False, future=True)
-                SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
-                await run_in_threadpool(Base.metadata.create_all, bind=engine)
-                print("✅ Fallback to SQLite successful")
-            except Exception as sqlite_error:
-                print(f"❌ SQLite fallback also failed: {sqlite_error}")
     
     print("🎉 Application startup complete")
     yield
