@@ -39,7 +39,7 @@ from fastapi.websockets import WebSocketState
 from pydantic import BaseModel, Field
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, String, Text, UniqueConstraint, func, select, create_engine,
+    BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, String, Text, UniqueConstraint, func, select, create_engine, text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.exc import IntegrityError
@@ -347,7 +347,7 @@ async def check_database(session=Depends(get_session)):
         session.execute(select(1))
         
         # Get table names
-        tables = session.execute(select("tablename").select_from("pg_tables").where("schemaname='public'")).scalars().all()
+        tables = session.execute(select(text("tablename")).select_from(text("pg_tables")).where(text("schemaname='public'")).scalars().all()
         
         return {
             "status": "connected",
