@@ -50,6 +50,15 @@ from starlette.concurrency import run_in_threadpool
 # ---------------------
 import os
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dev.db")
+
+# Configure PostgreSQL SSL for Railway
+if DATABASE_URL.startswith("postgresql://"):
+    # Add SSL configuration for Railway PostgreSQL
+    if "?" in DATABASE_URL:
+        DATABASE_URL += "&sslmode=require"
+    else:
+        DATABASE_URL += "?sslmode=require"
+
 engine = create_engine(DATABASE_URL, echo=False, future=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
 
@@ -671,4 +680,9 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 @app.get("/")
 async def read_index():
     return FileResponse("index.html")
+
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint for Railway"""
+    return {"status": "healthy", "message": "App is running"}
 
