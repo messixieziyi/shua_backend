@@ -59,7 +59,15 @@ if DATABASE_URL.startswith("postgresql://"):
     else:
         DATABASE_URL += "?sslmode=require"
 
-engine = create_engine(DATABASE_URL, echo=False, future=True)
+# Create engine with connection pooling and retry logic
+engine = create_engine(
+    DATABASE_URL, 
+    echo=False, 
+    future=True,
+    pool_pre_ping=True,  # Verify connections before use
+    pool_recycle=300,    # Recycle connections every 5 minutes
+    connect_args={"connect_timeout": 10} if DATABASE_URL.startswith("postgresql://") else {}
+)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
 
 class Base(DeclarativeBase):
@@ -216,7 +224,12 @@ async def system_message(session, thread_id: str, body: str):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    await run_in_threadpool(Base.metadata.create_all, bind=engine)
+    try:
+        await run_in_threadpool(Base.metadata.create_all, bind=engine)
+        print("✅ Database tables created successfully")
+    except Exception as e:
+        print(f"⚠️  Database connection failed during startup: {e}")
+        print("🔄 Application will continue without database tables (will be created on first use)")
     yield
     # Shutdown
     pass
