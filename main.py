@@ -347,7 +347,7 @@ async def check_database(session=Depends(get_session)):
         session.execute(select(1))
         
         # Get table names - PostgreSQL syntax
-        tables = session.execute(select(text("tablename")).select_from(text("pg_tables")).where(text("schemaname='public'")).scalars().all())
+        tables = session.execute(select(text("tablename")).select_from(text("pg_tables")).where(text("schemaname='public'"))).scalars().all()
         
         return {
             "status": "connected",
