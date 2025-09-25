@@ -81,6 +81,11 @@
         .host-message { background: #10b981; color: white; margin-right: auto; }
         .organizer-message { background: #f59e0b; color: white; margin-right: auto; }
         
+        .message-sender {
+            font-weight: bold;
+            font-size: 0.9em;
+        }
+        
         .chat-input {
             display: flex;
             padding: 20px;
@@ -790,10 +795,7 @@
                     chatDiv.innerHTML = '';
                     
                     messages.forEach(msg => {
-                        const messageDiv = document.createElement('div');
-                        messageDiv.className = `message ${msg.kind === 'system' ? 'system' : 'user'}-message`;
-                        messageDiv.textContent = msg.body;
-                        chatDiv.appendChild(messageDiv);
+                        addParticipantMessage(msg.body, msg.kind === 'system' ? 'system' : 'user', msg.sender_id);
                     });
                     
                     chatDiv.scrollTop = chatDiv.scrollHeight;
@@ -829,7 +831,7 @@
                 if (data.type === 'new_message') {
                     // Only add message if it's not from the current user (to avoid duplicates)
                     if (data.message.sender_id !== currentUserId) {
-                        addParticipantMessage(data.message.body, data.message.kind === 'system' ? 'system' : 'user');
+                        addParticipantMessage(data.message.body, data.message.kind === 'system' ? 'system' : 'user', data.message.sender_id);
                     }
                 }
             };
@@ -995,11 +997,35 @@
             }
         }
 
-        function addParticipantMessage(content, type = 'user') {
+        function addParticipantMessage(content, type = 'user', senderId = null) {
             const messagesDiv = document.getElementById('participantChat');
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${type}-message`;
-            messageDiv.textContent = content;
+            
+            // Get sender name if senderId is provided
+            let senderName = '';
+            if (senderId && type !== 'system') {
+                const sender = users.find(u => u.id == senderId);
+                senderName = sender ? sender.display_name : 'Unknown User';
+            }
+            
+            // Create message content with sender info
+            if (senderName && type !== 'system') {
+                const senderSpan = document.createElement('span');
+                senderSpan.className = 'message-sender';
+                senderSpan.textContent = `${senderName}: `;
+                senderSpan.style.fontWeight = 'bold';
+                senderSpan.style.color = type === 'user' ? 'rgba(255,255,255,0.8)' : 'rgba(0,0,0,0.7)';
+                
+                const contentSpan = document.createElement('span');
+                contentSpan.textContent = content;
+                
+                messageDiv.appendChild(senderSpan);
+                messageDiv.appendChild(contentSpan);
+            } else {
+                messageDiv.textContent = content;
+            }
+            
             messagesDiv.appendChild(messageDiv);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
@@ -1051,7 +1077,7 @@
                 if (response.ok) {
                     const messageData = await response.json();
                     // Add message to UI immediately for better UX
-                    addParticipantMessage(messageData.body, 'user');
+                    addParticipantMessage(messageData.body, 'user', currentUserId);
                     input.value = '';
                 } else {
                     const errorData = await response.json().catch(() => ({}));
