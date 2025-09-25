@@ -661,6 +661,7 @@
                 });
 
                 await loadEvents();
+                await loadRequests(); // Load requests from backend
                 console.log('Data loaded successfully');
                 updateRequestsOverview();
                 updateEventsOverview();
@@ -683,6 +684,17 @@
                 option.textContent = `${event.title} - ${new Date(event.starts_at).toLocaleString()} (${event.capacity} spots)`;
                 eventSelect.appendChild(option);
             });
+        }
+
+        async function loadRequests() {
+            try {
+                const requestsResponse = await fetch(`${API_BASE}/requests/all`);
+                requests = await requestsResponse.json();
+                console.log('Requests loaded:', requests);
+            } catch (error) {
+                console.error('Error loading requests:', error);
+                requests = []; // Fallback to empty array
+            }
         }
 
         async function refreshEvents() {
@@ -815,7 +827,10 @@
                 const data = JSON.parse(event.data);
                 
                 if (data.type === 'new_message') {
-                    addParticipantMessage(data.message.body, data.message.kind === 'system' ? 'system' : 'user');
+                    // Only add message if it's not from the current user (to avoid duplicates)
+                    if (data.message.sender_id !== currentUserId) {
+                        addParticipantMessage(data.message.body, data.message.kind === 'system' ? 'system' : 'user');
+                    }
                 }
             };
             
@@ -1035,7 +1050,8 @@
                 
                 if (response.ok) {
                     const messageData = await response.json();
-                    // Message will be added via WebSocket, so we don't add it here
+                    // Add message to UI immediately for better UX
+                    addParticipantMessage(messageData.body, 'user');
                     input.value = '';
                 } else {
                     const errorData = await response.json().catch(() => ({}));
@@ -1293,6 +1309,7 @@
 
         async function refreshEventsOverview() {
             await loadEvents();
+            await loadRequests();
             updateEventsOverview();
         }
 

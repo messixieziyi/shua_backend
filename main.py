@@ -384,6 +384,71 @@ async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), sessio
     return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
 # Endpoints
 # ---------------------
+@app.get("/requests")
+async def get_requests(user_id: str = Depends(get_user_id), session=Depends(get_session)):
+    """Get all requests where the user is either a guest or host."""
+    try:
+        # Get requests where user is guest or host
+        user_requests = session.execute(
+            select(Request)
+            .where((Request.guest_id == user_id) | (Request.host_id == user_id))
+            .order_by(Request.created_at.desc())
+        ).scalars().all()
+        
+        # Convert to response format with user names
+        result = []
+        for req in user_requests:
+            guest = session.execute(select(User).where(User.id == req.guest_id)).scalar_one_or_none()
+            host = session.execute(select(User).where(User.id == req.host_id)).scalar_one_or_none()
+            
+            result.append({
+                "id": req.id,
+                "event_id": req.event_id,
+                "user_id": req.guest_id,
+                "host_id": req.host_id,
+                "status": req.status,
+                "user_name": guest.display_name if guest else "Unknown User",
+                "host_name": host.display_name if host else "Unknown Host",
+                "event_title": "Event",  # We could join with events table if needed
+                "created_at": req.created_at.isoformat()
+            })
+        
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get requests: {str(e)}")
+
+@app.get("/requests/all")
+async def get_all_requests(session=Depends(get_session)):
+    """Get all requests (for admin/overview purposes)."""
+    try:
+        # Get all requests
+        all_requests = session.execute(
+            select(Request)
+            .order_by(Request.created_at.desc())
+        ).scalars().all()
+        
+        # Convert to response format with user names
+        result = []
+        for req in all_requests:
+            guest = session.execute(select(User).where(User.id == req.guest_id)).scalar_one_or_none()
+            host = session.execute(select(User).where(User.id == req.host_id)).scalar_one_or_none()
+            
+            result.append({
+                "id": req.id,
+                "event_id": req.event_id,
+                "user_id": req.guest_id,
+                "host_id": req.host_id,
+                "status": req.status,
+                "user_name": guest.display_name if guest else "Unknown User",
+                "host_name": host.display_name if host else "Unknown Host",
+                "event_title": "Event",  # We could join with events table if needed
+                "created_at": req.created_at.isoformat()
+            })
+        
+        return result
+    except Exception as e:
+        raise HTTPException(500, f"Failed to get all requests: {str(e)}")
+
 @app.post("/requests")
 async def create_request(payload: RequestCreate, user_id: str = Depends(get_user_id), session=Depends(get_session)):
     try:
@@ -663,31 +728,62 @@ async def send_message(
     session=Depends(get_session)
 ):
     """Send a message to a thread."""
-    # Verify user has access to thread
-    participant = session.execute(
-        select(ThreadParticipant)
-        .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == user_id)
-    ).scalar_one_or_none()
-    
-    if not participant:
-        raise HTTPException(403, "Access denied")
-    
-    # Check if thread is locked
-    thread = session.execute(select(Thread).where(Thread.id == thread_id)).scalar_one()
-    if thread.is_locked:
-        raise HTTPException(400, "Thread is locked")
-    
-    # Create message
-    message = Message(
-        thread_id=thread_id,
-        sender_id=user_id,
-        client_msg_id=payload.client_msg_id,
-        kind=MessageKind.USER,
-        body=payload.body,
-        seq=_next_seq(session, thread_id)
-    )
-    
     try:
+        # Get thread and verify it exists
+        thread = session.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
+        if not thread:
+            raise HTTPException(404, "Thread not found")
+        
+        # Verify user has access to thread
+        participant = session.execute(
+            select(ThreadParticipant)
+            .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == user_id)
+        ).scalar_one_or_none()
+        
+        if not participant:
+            raise HTTPException(403, "Access denied - you are not a participant in this thread")
+        
+        # Check if thread is locked
+        if thread.is_locked:
+            raise HTTPException(400, "Thread is locked")
+        
+        # Additional access control: Check if user is host or accepted participant
+        if thread.scope == ThreadScope.REQUEST:
+            # For request threads, check if user is the host or has an accepted request
+            request = session.execute(
+                select(Request).where(Request.id == thread.request_id)
+            ).scalar_one_or_none()
+            
+            if not request:
+                raise HTTPException(404, "Request not found")
+            
+            # Allow host or accepted guest
+            if user_id != request.host_id and request.status != RequestStatus.ACCEPTED:
+                raise HTTPException(403, "Only the host or accepted participants can send messages")
+        
+        elif thread.scope == ThreadScope.BOOKING:
+            # For booking threads, check if user is the host or has an accepted request
+            request = session.execute(
+                select(Request).where(Request.id == thread.request_id)
+            ).scalar_one_or_none()
+            
+            if not request:
+                raise HTTPException(404, "Request not found")
+            
+            # Allow host or accepted guest
+            if user_id != request.host_id and request.status != RequestStatus.ACCEPTED:
+                raise HTTPException(403, "Only the host or accepted participants can send messages")
+        
+        # Create message
+        message = Message(
+            thread_id=thread_id,
+            sender_id=user_id,
+            client_msg_id=payload.client_msg_id,
+            kind=MessageKind.USER,
+            body=payload.body,
+            seq=_next_seq(session, thread_id)
+        )
+        
         session.add(message)
         session.commit()
         
@@ -698,9 +794,16 @@ async def send_message(
         }, thread_id, exclude_user=message.sender_id)
         
         return serialize_message(message)
+    
+    except HTTPException:
+        session.rollback()
+        raise
     except IntegrityError:
         session.rollback()
         raise HTTPException(400, "Duplicate client_msg_id")
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(500, f"Failed to send message: {str(e)}")
 
 @app.post("/threads/{thread_id}/read")
 async def mark_messages_read(
