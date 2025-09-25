@@ -386,62 +386,111 @@ async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), sessio
 # ---------------------
 @app.post("/requests")
 async def create_request(payload: RequestCreate, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    req = Request(event_id=payload.event_id, guest_id=user_id, host_id=payload.host_id, auto_accept=payload.auto_accept)
-    session.add(req)
-    session.flush()
-
-    thread = Thread(scope=ThreadScope.REQUEST, request_id=req.id, event_id=payload.event_id)
-    session.add(thread)
-    session.flush()
-
-    session.add_all([ThreadParticipant(thread_id=thread.id, user_id=req.guest_id, role="guest"), ThreadParticipant(thread_id=thread.id, user_id=req.host_id, role="host")])
-    session.flush()
-
-    # auto-accept: immediately create booking
-    if req.auto_accept:
-        req.status = RequestStatus.ACCEPTED
-        booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
-        session.add(booking)
+    try:
+        # Validate that the event exists
+        event = session.execute(select(Event).where(Event.id == payload.event_id)).scalar_one_or_none()
+        if not event:
+            raise HTTPException(404, "Event not found")
+        
+        # Validate that the host exists
+        host = session.execute(select(User).where(User.id == payload.host_id)).scalar_one_or_none()
+        if not host:
+            raise HTTPException(404, "Host not found")
+        
+        # Check if user already has a request for this event
+        existing_request = session.execute(
+            select(Request).where(
+                Request.event_id == payload.event_id,
+                Request.guest_id == user_id
+            )
+        ).scalar_one_or_none()
+        
+        if existing_request:
+            raise HTTPException(400, "You already have a request for this event")
+        
+        # Create the request
+        req = Request(event_id=payload.event_id, guest_id=user_id, host_id=payload.host_id, auto_accept=payload.auto_accept)
+        session.add(req)
         session.flush()
-        thread.scope = ThreadScope.BOOKING
-        thread.booking_id = booking.id
-        session.flush()
-        await system_message(session, thread.id, "Request auto-accepted, booking confirmed.")
 
-    session.commit()
-    return {"request_id": req.id, "thread_id": thread.id, "status": req.status}
+        thread = Thread(scope=ThreadScope.REQUEST, request_id=req.id, event_id=payload.event_id)
+        session.add(thread)
+        session.flush()
+
+        session.add_all([ThreadParticipant(thread_id=thread.id, user_id=req.guest_id, role="guest"), ThreadParticipant(thread_id=thread.id, user_id=req.host_id, role="host")])
+        session.flush()
+
+        # auto-accept: immediately create booking
+        if req.auto_accept:
+            req.status = RequestStatus.ACCEPTED
+            booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
+            session.add(booking)
+            session.flush()
+            thread.scope = ThreadScope.BOOKING
+            thread.booking_id = booking.id
+            session.flush()
+            await system_message(session, thread.id, "Request auto-accepted, booking confirmed.")
+
+        session.commit()
+        return {"request_id": req.id, "thread_id": thread.id, "status": req.status}
+    
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(500, f"Failed to create request: {str(e)}")
 
 @app.post("/requests/{request_id}/act")
 async def act_on_request(request_id: str, payload: RequestAction, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    req = session.execute(select(Request).where(Request.id == request_id)).scalar_one_or_none()
-    if not req:
-        raise HTTPException(404, "Not found")
-    if user_id != req.host_id:
-        raise HTTPException(403, "Forbidden")
+    try:
+        req = session.execute(select(Request).where(Request.id == request_id)).scalar_one_or_none()
+        if not req:
+            raise HTTPException(404, "Request not found")
+        if user_id != req.host_id:
+            raise HTTPException(403, "Only the host can approve or decline requests")
 
-    thread = session.execute(select(Thread).where(Thread.request_id == req.id)).scalar_one()
+        thread = session.execute(select(Thread).where(Thread.request_id == req.id)).scalar_one_or_none()
+        if not thread:
+            raise HTTPException(404, "Thread not found for this request")
 
-    if payload.action == "accept":
-        req.status = RequestStatus.ACCEPTED
-        booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
-        session.add(booking)
-        session.flush()
-        thread.scope = ThreadScope.BOOKING
-        thread.booking_id = booking.id
-        session.flush()
-        await system_message(session, thread.id, "Request accepted, booking confirmed.")
-        session.commit()
-        return {"status": req.status, "booking_id": booking.id, "thread_id": thread.id}
+        if payload.action == "accept":
+            # Check if request is already processed
+            if req.status != RequestStatus.SUBMITTED:
+                raise HTTPException(400, f"Request is already {req.status.lower()}")
+            
+            req.status = RequestStatus.ACCEPTED
+            booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
+            session.add(booking)
+            session.flush()
+            thread.scope = ThreadScope.BOOKING
+            thread.booking_id = booking.id
+            session.flush()
+            await system_message(session, thread.id, "Request accepted, booking confirmed.")
+            session.commit()
+            return {"status": req.status, "booking_id": booking.id, "thread_id": thread.id}
 
-    if payload.action == "decline":
-        req.status = RequestStatus.DECLINED
-        thread.is_locked = True
-        session.flush()
-        await system_message(session, thread.id, "Request declined. Thread locked.")
-        session.commit()
-        return {"status": req.status, "thread_id": thread.id}
+        elif payload.action == "decline":
+            # Check if request is already processed
+            if req.status != RequestStatus.SUBMITTED:
+                raise HTTPException(400, f"Request is already {req.status.lower()}")
+            
+            req.status = RequestStatus.DECLINED
+            thread.is_locked = True
+            session.flush()
+            await system_message(session, thread.id, "Request declined. Thread locked.")
+            session.commit()
+            return {"status": req.status, "thread_id": thread.id}
 
-    raise HTTPException(400, "Invalid action")
+        else:
+            raise HTTPException(400, "Invalid action. Must be 'accept' or 'decline'")
+    
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(500, f"Failed to process request action: {str(e)}")
 
 @app.post("/dev/seed")
 async def seed_database(session=Depends(get_session)):

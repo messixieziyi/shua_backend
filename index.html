@@ -861,7 +861,21 @@
 
         async function requestToJoin() {
             if (!currentUserId || !currentEventId) {
-                
+                addParticipantMessage('❌ Please select both a user and an event first.', 'system');
+                return;
+            }
+
+            // Find the selected event to get the correct host_id
+            const selectedEvent = events.find(e => e.id == currentEventId);
+            if (!selectedEvent) {
+                addParticipantMessage('❌ Selected event not found. Please refresh and try again.', 'system');
+                return;
+            }
+
+            // Check if user already has a request for this event
+            const existingRequest = requests.find(r => r.user_id == currentUserId && r.event_id == currentEventId);
+            if (existingRequest) {
+                addParticipantMessage('❌ You already have a request for this event.', 'system');
                 return;
             }
 
@@ -873,8 +887,8 @@
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({
-                        event_id: parseInt(currentEventId),
-                        host_id: 1,
+                        event_id: currentEventId, // Keep as string, don't convert to int
+                        host_id: selectedEvent.created_by, // Use the actual event creator as host
                         auto_accept: false
                     })
                 });
@@ -885,24 +899,23 @@
                         id: data.request_id,
                         event_id: currentEventId,
                         user_id: currentUserId,
-                        host_id: 1,
-                        status: 'SUBMITTED',
+                        host_id: selectedEvent.created_by,
+                        status: data.status || 'SUBMITTED',
                         user_name: users.find(u => u.id == currentUserId)?.display_name || 'Unknown',
-                        event_title: events.find(e => e.id == currentEventId)?.title || 'Unknown Event'
+                        event_title: selectedEvent.title
                     };
                     requests.push(currentRequest);
                     
-                    
-                    
-                    
+                    addParticipantMessage('✅ Request to join event submitted successfully!', 'system');
                     updateParticipantUI();
                     updateRequestsOverview();
                 } else {
-                    throw new Error('Failed to create request');
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || 'Failed to create request');
                 }
             } catch (error) {
                 console.error('Error creating request:', error);
-                addParticipantMessage('❌ Sorry, there was an error creating your request. Please try again.', 'system');
+                addParticipantMessage(`❌ Sorry, there was an error creating your request: ${error.message}`, 'system');
             }
         }
 
@@ -1166,33 +1179,95 @@
             updateEventsOverview();
         }
 
-        function approveRequestFromOverview(requestId) {
+        async function approveRequestFromOverview(requestId) {
             const request = requests.find(r => r.id === requestId);
-            if (request) {
-                request.status = 'ACCEPTED';
-                updateRequestsOverview();
-                updateEventsOverview();
+            if (!request) {
+                console.error('Request not found:', requestId);
+                return;
+            }
+
+            try {
+                // Make API call to approve the request
+                const response = await fetch(`${API_BASE}/requests/${requestId}/act`, {
+                    method: 'POST',
+                    headers: {
+                        "X-User-Id": request.host_id.toString(),
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'accept'
+                    })
+                });
                 
-                if (currentUserId == request.user_id && currentEventId == request.event_id) {
-                    currentRequest = request;
-                    updateParticipantUI();
+                if (response.ok) {
+                    const data = await response.json();
                     
+                    // Update the request status
+                    request.status = data.status || 'ACCEPTED';
+                    
+                    // Update UI
+                    updateRequestsOverview();
+                    updateEventsOverview();
+                    
+                    // If this is the current user's request, update their UI
+                    if (currentUserId == request.user_id && currentEventId == request.event_id) {
+                        currentRequest = request;
+                        updateParticipantUI();
+                        addParticipantMessage('✅ Your request has been approved! You can now RSVP and chat.', 'system');
+                    }
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || 'Failed to approve request');
                 }
+            } catch (error) {
+                console.error('Error approving request:', error);
+                alert(`❌ Failed to approve request: ${error.message}`);
             }
         }
 
-        function declineRequestFromOverview(requestId) {
+        async function declineRequestFromOverview(requestId) {
             const request = requests.find(r => r.id === requestId);
-            if (request) {
-                request.status = 'DECLINED';
-                updateRequestsOverview();
-                updateEventsOverview();
+            if (!request) {
+                console.error('Request not found:', requestId);
+                return;
+            }
+
+            try {
+                // Make API call to decline the request
+                const response = await fetch(`${API_BASE}/requests/${requestId}/act`, {
+                    method: 'POST',
+                    headers: {
+                        "X-User-Id": request.host_id.toString(),
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        action: 'decline'
+                    })
+                });
                 
-                if (currentUserId == request.user_id && currentEventId == request.event_id) {
-                    currentRequest = request;
-                    updateParticipantUI();
-                    addParticipantMessage('❌ Sorry, your request was declined. You can try requesting a different event.', 'system');
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Update the request status
+                    request.status = data.status || 'DECLINED';
+                    
+                    // Update UI
+                    updateRequestsOverview();
+                    updateEventsOverview();
+                    
+                    // If this is the current user's request, update their UI
+                    if (currentUserId == request.user_id && currentEventId == request.event_id) {
+                        currentRequest = request;
+                        updateParticipantUI();
+                        addParticipantMessage('❌ Sorry, your request was declined. You can try requesting a different event.', 'system');
+                    }
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || 'Failed to decline request');
                 }
+            } catch (error) {
+                console.error('Error declining request:', error);
+                alert(`❌ Failed to decline request: ${error.message}`);
             }
         }
 
