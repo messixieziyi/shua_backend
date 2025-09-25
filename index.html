@@ -329,8 +329,6 @@
                     </div>
                     <div class="action-buttons" id="participantActions" style="display: none;">
                         <button onclick="requestToJoin()" class="primary" id="requestBtn">Request to Join Event</button>
-                        <button onclick="rsvpGoing()" class="success" id="rsvpGoingBtn" disabled>RSVP: Going</button>
-                        <button onclick="rsvpMaybe()" class="success" id="rsvpMaybeBtn" disabled>RSVP: Maybe</button>
                     </div>
                     <div class="chat-input" id="participantChatInput" style="display: none;">
                         <input type="text" id="participantInput" placeholder="Type your message..." onkeypress="handleParticipantKeyPress(event)">
@@ -695,6 +693,8 @@
         
         // Event-specific chat storage
         let eventChats = {};
+        let currentThreadId = null;
+        let websocket = null;
         
         function getEventChatKey(userId, eventId) {
             return `user_${userId}_event_${eventId}`;
@@ -717,28 +717,161 @@
             const chatDiv = document.getElementById('participantChat');
             eventChats[chatKey] = chatDiv.innerHTML;
         }
+
+        // Chat access control
+        async function checkChatAccess() {
+            if (!currentUserId || !currentEventId) return false;
+            
+            // Check if user is the event creator (host)
+            const selectedEvent = events.find(e => e.id == currentEventId);
+            if (selectedEvent && selectedEvent.created_by == currentUserId) {
+                return true;
+            }
+            
+            // Check if user is an accepted participant
+            const userRequest = requests.find(r => r.user_id == currentUserId && r.event_id == currentEventId);
+            if (userRequest && userRequest.status === 'ACCEPTED') {
+                return true;
+            }
+            
+            return false;
+        }
+
+        // Get thread ID for current event
+        async function getThreadIdForEvent() {
+            if (!currentUserId || !currentEventId) return null;
+            
+            try {
+                const response = await fetch(`${API_BASE}/threads`, {
+                    headers: {
+                        "X-User-Id": currentUserId.toString()
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    // Find thread for this event
+                    const thread = data.threads.find(t => t.event_id == currentEventId);
+                    return thread ? thread.id : null;
+                }
+            } catch (error) {
+                console.error('Error getting threads:', error);
+            }
+            
+            return null;
+        }
+
+        // Load messages for current thread
+        async function loadThreadMessages() {
+            if (!currentThreadId) return;
+            
+            try {
+                const response = await fetch(`${API_BASE}/threads/${currentThreadId}/messages`, {
+                    headers: {
+                        "X-User-Id": currentUserId.toString()
+                    }
+                });
+                
+                if (response.ok) {
+                    const messages = await response.json();
+                    const chatDiv = document.getElementById('participantChat');
+                    chatDiv.innerHTML = '';
+                    
+                    messages.forEach(msg => {
+                        const messageDiv = document.createElement('div');
+                        messageDiv.className = `message ${msg.kind === 'system' ? 'system' : 'user'}-message`;
+                        messageDiv.textContent = msg.body;
+                        chatDiv.appendChild(messageDiv);
+                    });
+                    
+                    chatDiv.scrollTop = chatDiv.scrollHeight;
+                }
+            } catch (error) {
+                console.error('Error loading messages:', error);
+            }
+        }
+
+        // WebSocket connection management
+        function connectWebSocket() {
+            if (websocket) {
+                websocket.close();
+            }
+            
+            if (!currentUserId) return;
+            
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/${currentUserId}`;
+            
+            websocket = new WebSocket(wsUrl);
+            
+            websocket.onopen = function() {
+                console.log('WebSocket connected');
+                if (currentThreadId) {
+                    joinThread(currentThreadId);
+                }
+            };
+            
+            websocket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                
+                if (data.type === 'new_message') {
+                    addParticipantMessage(data.message.body, data.message.kind === 'system' ? 'system' : 'user');
+                }
+            };
+            
+            websocket.onclose = function() {
+                console.log('WebSocket disconnected');
+                // Reconnect after 3 seconds
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            websocket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+            };
+        }
+
+        function joinThread(threadId) {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({
+                    type: 'join_thread',
+                    thread_id: threadId
+                }));
+            }
+        }
+
+        function leaveThread(threadId) {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({
+                    type: 'leave_thread',
+                    thread_id: threadId
+                }));
+            }
+        }
         
-        function selectParticipantUser() {
+        async function selectParticipantUser() {
             const userSelect = document.getElementById('userSelect');
             currentUserId = userSelect.value;
             console.log('Participant user selected:', currentUserId);
             
+            // Connect WebSocket for this user
+            connectWebSocket();
+            
             // Load chat for this user and current event
             if (currentUserId && currentEventId) {
-                loadEventChat(currentUserId, currentEventId);
+                await initializeChat();
             }
             
             updateParticipantUI();
         }
         
-        function selectEvent() {
+        async function selectEvent() {
             const eventSelect = document.getElementById('eventSelect');
             currentEventId = eventSelect.value;
             console.log('Event selected:', currentEventId);
             
             // Save current chat and load chat for this event
             if (currentUserId && currentEventId) {
-                loadEventChat(currentUserId, currentEventId);
+                await initializeChat();
             }
             
             updateParticipantUI();
@@ -785,29 +918,65 @@
             }
         }
 
-        function updateParticipantUI() {
-            if (!currentRequest) return;
+        // Initialize chat for current user and event
+        async function initializeChat() {
+            if (!currentUserId || !currentEventId) return;
             
-            document.getElementById('participantActions').style.display = 'flex';
+            // Check if user has chat access
+            const hasAccess = await checkChatAccess();
             
-            if (currentRequest.status === 'ACCEPTED') {
-                document.getElementById('requestBtn').disabled = true;
-                document.getElementById('rsvpGoingBtn').disabled = false;
-                document.getElementById('rsvpMaybeBtn').disabled = false;
+            if (hasAccess) {
+                // Get thread ID and load messages
+                currentThreadId = await getThreadIdForEvent();
+                if (currentThreadId) {
+                    await loadThreadMessages();
+                    joinThread(currentThreadId);
+                }
+            } else {
+                // Clear chat if no access
+                const chatDiv = document.getElementById('participantChat');
+                chatDiv.innerHTML = '';
+                currentThreadId = null;
+            }
+        }
+
+        async function updateParticipantUI() {
+            if (!currentUserId || !currentEventId) {
+                document.getElementById('participantActions').style.display = 'none';
+                document.getElementById('participantChatInput').style.display = 'none';
+                return;
+            }
+            
+            // Check if user has chat access
+            const hasAccess = await checkChatAccess();
+            
+            if (hasAccess) {
+                document.getElementById('participantActions').style.display = 'flex';
                 document.getElementById('participantChatInput').style.display = 'flex';
                 
-            } else if (currentRequest.status === 'SUBMITTED') {
-                document.getElementById('requestBtn').disabled = true;
-                document.getElementById('rsvpGoingBtn').disabled = true;
-                document.getElementById('rsvpMaybeBtn').disabled = true;
+                // Update button states based on request status
+                if (currentRequest) {
+                    if (currentRequest.status === 'ACCEPTED') {
+                        document.getElementById('requestBtn').disabled = true;
+                    } else if (currentRequest.status === 'SUBMITTED') {
+                        document.getElementById('requestBtn').disabled = true;
+                    } else if (currentRequest.status === 'DECLINED') {
+                        document.getElementById('requestBtn').disabled = true;
+                    }
+                } else {
+                    // No request yet, show request button
+                    document.getElementById('requestBtn').disabled = false;
+                }
+            } else {
+                document.getElementById('participantActions').style.display = 'flex';
                 document.getElementById('participantChatInput').style.display = 'none';
                 
-            } else if (currentRequest.status === 'DECLINED') {
-                document.getElementById('requestBtn').disabled = true;
-                document.getElementById('rsvpGoingBtn').disabled = true;
-                document.getElementById('rsvpMaybeBtn').disabled = true;
-                document.getElementById('participantChatInput').style.display = 'none';
-                
+                // Show request button if no request exists
+                if (!currentRequest) {
+                    document.getElementById('requestBtn').disabled = false;
+                } else {
+                    document.getElementById('requestBtn').disabled = true;
+                }
             }
         }
 
@@ -828,12 +997,13 @@
 
         async function sendParticipantMessage(customMessage = null) {
             if (!currentUserId || !currentEventId) {
-                
+                addParticipantMessage('❌ Please select both a user and an event first.', 'system');
                 return;
             }
 
-            if (!currentRequest || currentRequest.status !== 'ACCEPTED') {
-                
+            // Check if user has access to chat (host or accepted participant)
+            if (!await checkChatAccess()) {
+                addParticipantMessage('❌ You can only chat if you are the host or an accepted participant of this event.', 'system');
                 return;
             }
 
@@ -842,21 +1012,39 @@
             
             if (!message) return;
             
-            addParticipantMessage(message, 'user');
-            input.value = '';
-            
-            setTimeout(() => {
-                const responses = [
-                    "Thanks for your interest! I'd be happy to have you join us.",
-                    "Great question! The event starts at the time shown and should be really fun.",
-                    "It's completely free! We just ask that you RSVP so we know how many people to expect.",
-                    "We'll have refreshments and some amazing activities lined up!",
-                    "Perfect! I'll add you to the guest list. See you there!",
-                    "The venue is at the location shown. Let me know if you need directions."
-                ];
-                const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-                addParticipantMessage(randomResponse, 'host');
-            }, 1000);
+            // Get the thread ID for this event
+            const threadId = await getThreadIdForEvent();
+            if (!threadId) {
+                addParticipantMessage('❌ No chat thread found for this event.', 'system');
+                return;
+            }
+
+            try {
+                // Send message to backend
+                const response = await fetch(`${API_BASE}/threads/${threadId}/messages`, {
+                    method: 'POST',
+                    headers: {
+                        "X-User-Id": currentUserId.toString(),
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        client_msg_id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                        body: message
+                    })
+                });
+                
+                if (response.ok) {
+                    const messageData = await response.json();
+                    // Message will be added via WebSocket, so we don't add it here
+                    input.value = '';
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || 'Failed to send message');
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+                addParticipantMessage(`❌ Failed to send message: ${error.message}`, 'system');
+            }
         }
 
         async function requestToJoin() {
@@ -919,77 +1107,6 @@
             }
         }
 
-        async function rsvpGoing() {
-            if (!currentUserId || !currentEventId) {
-                
-                return;
-            }
-
-            if (!currentRequest || currentRequest.status !== 'ACCEPTED') {
-                
-                return;
-            }
-
-            try {
-                const response = await fetch(`${API_BASE}/rsvps`, {
-                    method: 'POST',
-                    headers: {
-                        "X-User-Id": currentUserId.toString(),
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        event_id: parseInt(currentEventId),
-                        status: 'going',
-                        guests_count: 0
-                    })
-                });
-                
-                if (response.ok) {
-                    
-                } else {
-                    throw new Error('Failed to create RSVP');
-                }
-            } catch (error) {
-                console.error('Error creating RSVP:', error);
-                addParticipantMessage('❌ Sorry, there was an error creating your RSVP.', 'system');
-            }
-        }
-
-        async function rsvpMaybe() {
-            if (!currentUserId || !currentEventId) {
-                
-                return;
-            }
-
-            if (!currentRequest || currentRequest.status !== 'ACCEPTED') {
-                
-                return;
-            }
-
-            try {
-                const response = await fetch(`${API_BASE}/rsvps`, {
-                    method: 'POST',
-                    headers: {
-                        "X-User-Id": currentUserId.toString(),
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        event_id: parseInt(currentEventId),
-                        status: 'maybe',
-                        guests_count: 0
-                    })
-                });
-                
-                if (response.ok) {
-                    
-                } else {
-                    throw new Error('Failed to create RSVP');
-                }
-            } catch (error) {
-                console.error('Error creating RSVP:', error);
-                addParticipantMessage('❌ Sorry, there was an error creating your RSVP.', 'system');
-            }
-        }
 
         // EVENT CREATION
         document.getElementById('eventForm').addEventListener('submit', async function(e) {
@@ -1213,7 +1330,7 @@
                     if (currentUserId == request.user_id && currentEventId == request.event_id) {
                         currentRequest = request;
                         updateParticipantUI();
-                        addParticipantMessage('✅ Your request has been approved! You can now RSVP and chat.', 'system');
+                        addParticipantMessage('✅ Your request has been approved! You can now chat.', 'system');
                     }
                 } else {
                     const errorData = await response.json().catch(() => ({}));
@@ -1332,9 +1449,16 @@
             }
         }
 
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (websocket) {
+                websocket.close();
+            }
+        });
+
         // Initialize
         document.getElementById('userSelect').addEventListener('change', selectParticipantUser);
-        document.getElementById('eventSelect').addEventListener('change', selectParticipantEvent);
+        document.getElementById('eventSelect').addEventListener('change', selectEvent);
         loadData();
     </script>
 </body>
