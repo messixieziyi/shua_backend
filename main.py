@@ -654,6 +654,51 @@ async def seed_database(session=Depends(get_session)):
         "event_id": event_id
     }
 
+@app.post("/dev/seed-tags")
+async def seed_tags(session=Depends(get_session)):
+    """Endpoint to seed the database with sample tags."""
+    sample_tags = [
+        {"name": "Beginner", "color": "#10b981", "description": "Suitable for beginners"},
+        {"name": "Advanced", "color": "#ef4444", "description": "For experienced participants"},
+        {"name": "Outdoor", "color": "#059669", "description": "Outdoor activities"},
+        {"name": "Indoor", "color": "#3b82f6", "description": "Indoor activities"},
+        {"name": "Morning", "color": "#f59e0b", "description": "Morning sessions"},
+        {"name": "Evening", "color": "#8b5cf6", "description": "Evening sessions"},
+        {"name": "Weekend", "color": "#ec4899", "description": "Weekend events"},
+        {"name": "Free", "color": "#10b981", "description": "Free events"},
+        {"name": "Paid", "color": "#f59e0b", "description": "Paid events"},
+        {"name": "Group", "color": "#6366f1", "description": "Group activities"},
+        {"name": "Solo", "color": "#8b5cf6", "description": "Individual activities"},
+        {"name": "Fitness", "color": "#ef4444", "description": "Fitness related"},
+        {"name": "Social", "color": "#ec4899", "description": "Social events"},
+        {"name": "Competitive", "color": "#dc2626", "description": "Competitive events"},
+        {"name": "Casual", "color": "#6b7280", "description": "Casual activities"}
+    ]
+    
+    created_tags = []
+    for tag_data in sample_tags:
+        # Check if tag already exists
+        existing_tag = session.execute(
+            select(Tag).where(Tag.name == tag_data["name"])
+        ).scalar_one_or_none()
+        
+        if not existing_tag:
+            new_tag = Tag(
+                name=tag_data["name"],
+                color=tag_data["color"],
+                description=tag_data["description"]
+            )
+            session.add(new_tag)
+            created_tags.append(tag_data["name"])
+    
+    session.commit()
+    
+    return {
+        "message": f"Created {len(created_tags)} sample tags",
+        "created_tags": created_tags,
+        "total_tags": len(sample_tags)
+    }
+
 @app.post("/dev/create-tables")
 async def create_tables(session=Depends(get_session)):
     """Manually create all database tables."""

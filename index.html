@@ -480,9 +480,11 @@
                     <div id="tagManagement" style="margin-top: 20px; border-top: 1px solid #e5e7eb; padding-top: 20px;">
                         <h5>Tag Management</h5>
                         <div style="margin-bottom: 15px;">
-                            <input type="text" id="newTagName" placeholder="Tag name" style="width: 60%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; margin-right: 5px;">
-                            <input type="color" id="newTagColor" value="#4f46e5" style="width: 20%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; margin-right: 5px;">
-                            <button onclick="createTag()" style="padding: 8px 12px; background: #4f46e5; color: white; border: none; border-radius: 4px; cursor: pointer;">Create</button>
+                            <input type="text" id="newTagName" placeholder="Tag name" style="width: 50%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; margin-right: 5px;">
+                            <input type="color" id="newTagColor" value="#4f46e5" style="width: 15%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; margin-right: 5px;">
+                            <button onclick="createTag()" style="padding: 8px 12px; background: #4f46e5; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px;">Create</button>
+                            <button onclick="createSampleTags()" style="padding: 8px 12px; background: #10b981; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 5px;">Add Samples</button>
+                            <button onclick="seedTagsFromBackend()" style="padding: 8px 12px; background: #f59e0b; color: white; border: none; border-radius: 4px; cursor: pointer;">Seed Backend</button>
                         </div>
                         <div id="tagsList" style="max-height: 150px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px;">
                             <!-- Tags will be populated here -->
@@ -1744,6 +1746,94 @@
             } catch (error) {
                 console.error('Error deleting tag:', error);
                 alert(`Failed to delete tag: ${error.message}`);
+            }
+        }
+
+        async function createSampleTags() {
+            const sampleTags = [
+                { name: 'Beginner', color: '#10b981', description: 'Suitable for beginners' },
+                { name: 'Advanced', color: '#ef4444', description: 'For experienced participants' },
+                { name: 'Outdoor', color: '#059669', description: 'Outdoor activities' },
+                { name: 'Indoor', color: '#3b82f6', description: 'Indoor activities' },
+                { name: 'Morning', color: '#f59e0b', description: 'Morning sessions' },
+                { name: 'Evening', color: '#8b5cf6', description: 'Evening sessions' },
+                { name: 'Weekend', color: '#ec4899', description: 'Weekend events' },
+                { name: 'Free', color: '#10b981', description: 'Free events' },
+                { name: 'Paid', color: '#f59e0b', description: 'Paid events' },
+                { name: 'Group', color: '#6366f1', description: 'Group activities' },
+                { name: 'Solo', color: '#8b5cf6', description: 'Individual activities' },
+                { name: 'Fitness', color: '#ef4444', description: 'Fitness related' },
+                { name: 'Social', color: '#ec4899', description: 'Social events' },
+                { name: 'Competitive', color: '#dc2626', description: 'Competitive events' },
+                { name: 'Casual', color: '#6b7280', description: 'Casual activities' }
+            ];
+
+            let createdCount = 0;
+            let skippedCount = 0;
+
+            for (const tagData of sampleTags) {
+                try {
+                    // Check if tag already exists
+                    const existingTag = tags.find(tag => tag.name.toLowerCase() === tagData.name.toLowerCase());
+                    if (existingTag) {
+                        skippedCount++;
+                        continue;
+                    }
+
+                    const response = await fetch(`${API_BASE}/tags`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(tagData)
+                    });
+
+                    if (response.ok) {
+                        const newTag = await response.json();
+                        tags.push(newTag);
+                        createdCount++;
+                    } else {
+                        console.warn(`Failed to create tag: ${tagData.name}`);
+                    }
+                } catch (error) {
+                    console.error(`Error creating tag ${tagData.name}:`, error);
+                }
+            }
+
+            // Update UI
+            updateTagsList();
+            updateAvailableTags();
+            updateTagFilter();
+
+            // Show result
+            if (createdCount > 0) {
+                alert(`✅ Created ${createdCount} sample tags!${skippedCount > 0 ? ` (${skippedCount} already existed)` : ''}`);
+            } else if (skippedCount > 0) {
+                alert(`ℹ️ All sample tags already exist (${skippedCount} tags found)`);
+            } else {
+                alert('❌ Failed to create sample tags. Please try again.');
+            }
+        }
+
+        async function seedTagsFromBackend() {
+            try {
+                const response = await fetch(`${API_BASE}/dev/seed-tags`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    alert(`✅ ${result.message}! Created: ${result.created_tags.join(', ')}`);
+                    
+                    // Reload tags to update the UI
+                    await loadTags();
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || 'Failed to seed tags');
+                }
+            } catch (error) {
+                console.error('Error seeding tags from backend:', error);
+                alert(`Failed to seed tags: ${error.message}`);
             }
         }
 
