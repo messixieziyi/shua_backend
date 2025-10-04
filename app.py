@@ -148,6 +148,20 @@ class MessageRead(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     last_read_seq: Mapped[int] = mapped_column(BigInteger, default=0)
 
+class Tag(Base):
+    __tablename__ = "tags"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(50), unique=True)
+    color: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)  # Hex color code
+    description: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+
+class EventTag(Base):
+    __tablename__ = "event_tags"
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    tag_id: Mapped[str] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+
 # ---------------------
 # Schemas
 # ---------------------
@@ -171,6 +185,21 @@ class MessageOut(BaseModel):
     body: str
     created_at: dt.datetime
     seq: int
+
+class TagCreate(BaseModel):
+    name: str
+    color: Optional[str] = None
+    description: Optional[str] = None
+
+class TagOut(BaseModel):
+    id: str
+    name: str
+    color: Optional[str]
+    description: Optional[str]
+    created_at: dt.datetime
+
+class EventTagCreate(BaseModel):
+    tag_ids: list[str]
 
 # ---------------------
 # Dependencies

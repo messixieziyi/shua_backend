@@ -404,6 +404,18 @@
                             <label for="eventAddress">Address</label>
                             <input type="text" id="eventAddress" placeholder="Full address">
                         </div>
+                        <div class="form-group">
+                            <label for="eventTags">Tags</label>
+                            <div id="tagSelector" style="border: 1px solid #d1d5db; border-radius: 6px; padding: 10px; min-height: 40px; display: flex; flex-wrap: wrap; gap: 5px; align-items: center;">
+                                <span style="color: #6b7280; font-size: 14px;">Select tags...</span>
+                            </div>
+                            <div id="availableTags" style="margin-top: 10px; max-height: 150px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px; display: none;">
+                                <!-- Available tags will be populated here -->
+                            </div>
+                            <button type="button" onclick="toggleTagSelector()" style="margin-top: 5px; padding: 5px 10px; font-size: 12px; background: #f3f4f6; border: 1px solid #d1d5db; border-radius: 4px; cursor: pointer;">
+                                <span id="tagToggleText">Show Tags</span>
+                            </button>
+                        </div>
                         <button type="submit" class="primary" style="width: 100%; padding: 12px;">Create Event</button>
                     </form>
                 </div>
@@ -425,9 +437,15 @@
             <div class="panel-header events-header">📅 Events Overview</div>
             <div class="panel-content">
                 <div class="sidebar">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                         <h4 style="margin: 0;">All Events</h4>
                         <button onclick="refreshEventsOverview()" class="primary" style="padding: 6px 12px; font-size: 12px;">Refresh</button>
+                    </div>
+                    <div style="margin-bottom: 10px;">
+                        <label for="tagFilter" style="font-size: 12px; color: #374151; margin-bottom: 5px; display: block;">Filter by Tag:</label>
+                        <select id="tagFilter" onchange="filterEventsByTag()" style="width: 100%; padding: 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 12px;">
+                            <option value="">All Events</option>
+                        </select>
                     </div>
                 </div>
                 <div class="events-overview" id="eventsOverview">
@@ -458,6 +476,18 @@
                         <h5>Recent Users</h5>
                         <div id="recentUsersList" style="max-height: 200px; overflow-y: auto;"></div>
                     </div>
+                    
+                    <div id="tagManagement" style="margin-top: 20px; border-top: 1px solid #e5e7eb; padding-top: 20px;">
+                        <h5>Tag Management</h5>
+                        <div style="margin-bottom: 15px;">
+                            <input type="text" id="newTagName" placeholder="Tag name" style="width: 60%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; margin-right: 5px;">
+                            <input type="color" id="newTagColor" value="#4f46e5" style="width: 20%; padding: 8px; border: 1px solid #d1d5db; border-radius: 4px; margin-right: 5px;">
+                            <button onclick="createTag()" style="padding: 8px 12px; background: #4f46e5; color: white; border: none; border-radius: 4px; cursor: pointer;">Create</button>
+                        </div>
+                        <div id="tagsList" style="max-height: 150px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px;">
+                            <!-- Tags will be populated here -->
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -471,6 +501,8 @@
         let events = [];
         let requests = [];
         let currentRequest = null;
+        let tags = [];
+        let selectedTags = [];
 
         // User creation functions
         function generateRandomUser() {
@@ -667,6 +699,7 @@
 
                 await loadEvents();
                 await loadRequests(); // Load requests from backend
+                await loadTags(); // Load tags
                 console.log('Data loaded successfully');
                 updateRequestsOverview();
                 updateEventsOverview();
@@ -1168,7 +1201,8 @@
                 activity_type: document.getElementById('eventActivity').value,
                 location: document.getElementById('eventLocation').value,
                 address: document.getElementById('eventAddress').value,
-                created_by: creatorId
+                created_by: creatorId,
+                tag_ids: selectedTags
             };
 
             try {
@@ -1318,6 +1352,18 @@
                         🏃 Activity: ${event.activity_type}<br>
                         📍 ${event.location || 'Location TBD'}
                     </div>
+                    ${event.tags && event.tags.length > 0 ? `
+                    <div class="event-tags" style="margin-top: 10px;">
+                        <div style="font-weight: 600; color: #374151; margin-bottom: 5px;">Tags:</div>
+                        <div style="display: flex; flex-wrap: wrap; gap: 4px;">
+                            ${event.tags.map(tag => `
+                                <span style="background: ${tag.color || '#e5e7eb'}; color: ${getContrastColor(tag.color || '#e5e7eb')}; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;">
+                                    ${tag.name}
+                                </span>
+                            `).join('')}
+                        </div>
+                    </div>
+                    ` : ''}
                     <div class="event-participants">
                         <div class="participants-header">Participants (${participants.length}/${event.capacity}):</div>
                         <div class="participant-list">
@@ -1336,6 +1382,7 @@
         async function refreshEventsOverview() {
             await loadEvents();
             await loadRequests();
+            await loadTags();
             updateEventsOverview();
         }
 
@@ -1489,6 +1536,214 @@
             // Keep only last 5 users
             while (recentUsersList.children.length > 5) {
                 recentUsersList.removeChild(recentUsersList.lastChild);
+            }
+        }
+
+        // Tag management functions
+        function getContrastColor(hexColor) {
+            // Convert hex to RGB
+            const r = parseInt(hexColor.slice(1, 3), 16);
+            const g = parseInt(hexColor.slice(3, 5), 16);
+            const b = parseInt(hexColor.slice(5, 7), 16);
+            
+            // Calculate luminance
+            const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+            
+            // Return black for light colors, white for dark colors
+            return luminance > 0.5 ? '#000000' : '#ffffff';
+        }
+
+        async function loadTags() {
+            try {
+                const response = await fetch(`${API_BASE}/tags`);
+                tags = await response.json();
+                console.log('Tags loaded:', tags);
+                updateTagsList();
+                updateAvailableTags();
+                updateTagFilter();
+            } catch (error) {
+                console.error('Error loading tags:', error);
+            }
+        }
+
+        function updateTagFilter() {
+            const tagFilterSelect = document.getElementById('tagFilter');
+            tagFilterSelect.innerHTML = '<option value="">All Events</option>';
+            
+            tags.forEach(tag => {
+                const option = document.createElement('option');
+                option.value = tag.name;
+                option.textContent = tag.name;
+                tagFilterSelect.appendChild(option);
+            });
+        }
+
+        async function filterEventsByTag() {
+            const tagFilter = document.getElementById('tagFilter').value;
+            
+            try {
+                let url = `${API_BASE}/events`;
+                if (tagFilter) {
+                    url += `?tag_filter=${encodeURIComponent(tagFilter)}`;
+                }
+                
+                const response = await fetch(url);
+                events = await response.json();
+                console.log('Filtered events loaded:', events);
+                updateEventsOverview();
+            } catch (error) {
+                console.error('Error filtering events:', error);
+            }
+        }
+
+        function updateTagsList() {
+            const tagsListDiv = document.getElementById('tagsList');
+            if (tags.length === 0) {
+                tagsListDiv.innerHTML = '<div style="color: #6b7280; font-style: italic;">No tags created yet</div>';
+                return;
+            }
+
+            tagsListDiv.innerHTML = tags.map(tag => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px; margin-bottom: 5px; background: #f9fafb;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="background: ${tag.color || '#e5e7eb'}; color: ${getContrastColor(tag.color || '#e5e7eb')}; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;">
+                            ${tag.name}
+                        </span>
+                        ${tag.description ? `<span style="color: #6b7280; font-size: 12px;">${tag.description}</span>` : ''}
+                    </div>
+                    <button onclick="deleteTag('${tag.id}')" style="padding: 4px 8px; background: #ef4444; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Delete</button>
+                </div>
+            `).join('');
+        }
+
+        function updateAvailableTags() {
+            const availableTagsDiv = document.getElementById('availableTags');
+            if (tags.length === 0) {
+                availableTagsDiv.innerHTML = '<div style="color: #6b7280; font-style: italic; text-align: center; padding: 20px;">No tags available</div>';
+                return;
+            }
+
+            availableTagsDiv.innerHTML = tags.map(tag => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px; border: 1px solid #e5e7eb; border-radius: 4px; margin-bottom: 5px; cursor: pointer; background: ${selectedTags.includes(tag.id) ? '#e0e7ff' : 'white'};" 
+                     onclick="toggleTagSelection('${tag.id}')">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="background: ${tag.color || '#e5e7eb'}; color: ${getContrastColor(tag.color || '#e5e7eb')}; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;">
+                            ${tag.name}
+                        </span>
+                        ${tag.description ? `<span style="color: #6b7280; font-size: 12px;">${tag.description}</span>` : ''}
+                    </div>
+                    <span style="color: #6b7280; font-size: 12px;">${selectedTags.includes(tag.id) ? '✓' : ''}</span>
+                </div>
+            `).join('');
+        }
+
+        function toggleTagSelector() {
+            const availableTagsDiv = document.getElementById('availableTags');
+            const toggleText = document.getElementById('tagToggleText');
+            
+            if (availableTagsDiv.style.display === 'none') {
+                availableTagsDiv.style.display = 'block';
+                toggleText.textContent = 'Hide Tags';
+            } else {
+                availableTagsDiv.style.display = 'none';
+                toggleText.textContent = 'Show Tags';
+            }
+        }
+
+        function toggleTagSelection(tagId) {
+            if (selectedTags.includes(tagId)) {
+                selectedTags = selectedTags.filter(id => id !== tagId);
+            } else {
+                selectedTags.push(tagId);
+            }
+            updateAvailableTags();
+            updateTagSelector();
+        }
+
+        function updateTagSelector() {
+            const tagSelectorDiv = document.getElementById('tagSelector');
+            
+            if (selectedTags.length === 0) {
+                tagSelectorDiv.innerHTML = '<span style="color: #6b7280; font-size: 14px;">Select tags...</span>';
+                return;
+            }
+
+            const selectedTagObjects = tags.filter(tag => selectedTags.includes(tag.id));
+            tagSelectorDiv.innerHTML = selectedTagObjects.map(tag => `
+                <span style="background: ${tag.color || '#e5e7eb'}; color: ${getContrastColor(tag.color || '#e5e7eb')}; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; display: flex; align-items: center; gap: 4px;">
+                    ${tag.name}
+                    <button onclick="toggleTagSelection('${tag.id}')" style="background: none; border: none; color: inherit; cursor: pointer; font-size: 14px; padding: 0; margin-left: 4px;">×</button>
+                </span>
+            `).join('');
+        }
+
+        async function createTag() {
+            const name = document.getElementById('newTagName').value.trim();
+            const color = document.getElementById('newTagColor').value;
+            
+            if (!name) {
+                alert('Please enter a tag name');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/tags`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: name,
+                        color: color,
+                        description: ''
+                    })
+                });
+
+                if (response.ok) {
+                    const newTag = await response.json();
+                    tags.push(newTag);
+                    updateTagsList();
+                    updateAvailableTags();
+                    
+                    // Clear form
+                    document.getElementById('newTagName').value = '';
+                    document.getElementById('newTagColor').value = '#4f46e5';
+                    
+                    console.log('Tag created successfully:', newTag);
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || 'Failed to create tag');
+                }
+            } catch (error) {
+                console.error('Error creating tag:', error);
+                alert(`Failed to create tag: ${error.message}`);
+            }
+        }
+
+        async function deleteTag(tagId) {
+            if (!confirm('Are you sure you want to delete this tag? This will remove it from all events.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/tags/${tagId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    tags = tags.filter(tag => tag.id !== tagId);
+                    selectedTags = selectedTags.filter(id => id !== tagId);
+                    updateTagsList();
+                    updateAvailableTags();
+                    updateTagSelector();
+                    console.log('Tag deleted successfully');
+                } else {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.detail || 'Failed to delete tag');
+                }
+            } catch (error) {
+                console.error('Error deleting tag:', error);
+                alert(`Failed to delete tag: ${error.message}`);
             }
         }
 

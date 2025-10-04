@@ -184,6 +184,20 @@ class MessageRead(Base):
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     last_read_seq: Mapped[int] = mapped_column(BigInteger, default=0)
 
+class Tag(Base):
+    __tablename__ = "tags"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name: Mapped[str] = mapped_column(String(50), unique=True)
+    color: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)  # Hex color code
+    description: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+
+class EventTag(Base):
+    __tablename__ = "event_tags"
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    tag_id: Mapped[str] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+
 # ---------------------
 # Schemas
 # ---------------------
@@ -207,6 +221,21 @@ class MessageOut(BaseModel):
     body: str
     created_at: dt.datetime
     seq: int
+
+class TagCreate(BaseModel):
+    name: str
+    color: Optional[str] = None
+    description: Optional[str] = None
+
+class TagOut(BaseModel):
+    id: str
+    name: str
+    color: Optional[str]
+    description: Optional[str]
+    created_at: dt.datetime
+
+class EventTagCreate(BaseModel):
+    tag_ids: list[str]
 
 # ---------------------
 # Dependencies
@@ -304,11 +333,24 @@ async def create_user(user_data: dict, session=Depends(get_session)):
         raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
 
 @app.get("/events")
-async def list_events(session=Depends(get_session)):
-    """Get all events."""
-    events = session.execute(select(Event)).scalars().all()
-    return [
-        {
+async def list_events(session=Depends(get_session), tag_filter: Optional[str] = None):
+    """Get all events, optionally filtered by tag."""
+    query = select(Event)
+    
+    if tag_filter:
+        # Filter events by tag name
+        query = query.join(EventTag).join(Tag).where(Tag.name.ilike(f"%{tag_filter}%"))
+    
+    events = session.execute(query).scalars().all()
+    
+    result = []
+    for event in events:
+        # Get tags for this event
+        event_tags = session.execute(
+            select(Tag).join(EventTag).where(EventTag.event_id == event.id)
+        ).scalars().all()
+        
+        result.append({
             "id": event.id,
             "title": event.title,
             "description": event.description,
@@ -317,10 +359,19 @@ async def list_events(session=Depends(get_session)):
             "activity_type": event.activity_type,
             "location": event.location,
             "address": event.address,
-            "created_by": event.created_by
-        }
-        for event in events
-    ]
+            "created_by": event.created_by,
+            "tags": [
+                {
+                    "id": tag.id,
+                    "name": tag.name,
+                    "color": tag.color,
+                    "description": tag.description
+                }
+                for tag in event_tags
+            ]
+        })
+    
+    return result
 
 @app.post("/events")
 async def create_event(event_data: dict, user_id: str = Depends(get_user_id), session=Depends(get_session)):
@@ -359,8 +410,25 @@ async def create_event(event_data: dict, user_id: str = Depends(get_user_id), se
             created_by=created_by
         )
         session.add(new_event)
+        session.flush()  # Flush to get the event ID
+        
+        # Add tags if provided
+        tag_ids = event_data.get("tag_ids", [])
+        if tag_ids:
+            for tag_id in tag_ids:
+                # Verify tag exists
+                tag = session.execute(select(Tag).where(Tag.id == tag_id)).scalar_one_or_none()
+                if tag:
+                    event_tag = EventTag(event_id=new_event.id, tag_id=tag_id)
+                    session.add(event_tag)
+        
         session.commit()
         session.refresh(new_event)
+        
+        # Get tags for response
+        event_tags = session.execute(
+            select(Tag).join(EventTag).where(EventTag.event_id == new_event.id)
+        ).scalars().all()
         
         return {
             "id": new_event.id,
@@ -371,7 +439,16 @@ async def create_event(event_data: dict, user_id: str = Depends(get_user_id), se
             "activity_type": new_event.activity_type,
             "location": new_event.location,
             "address": new_event.address,
-            "created_by": new_event.created_by
+            "created_by": new_event.created_by,
+            "tags": [
+                {
+                    "id": tag.id,
+                    "name": tag.name,
+                    "color": tag.color,
+                    "description": tag.description
+                }
+                for tag in event_tags
+            ]
         }
     except Exception as e:
         session.rollback()
@@ -961,4 +1038,166 @@ async def read_index():
 async def health_check():
     """Simple health check endpoint for Railway"""
     return {"status": "healthy", "message": "App is running"}
+
+# ---------------------
+# Tag Management Endpoints
+# ---------------------
+
+@app.get("/tags")
+async def list_tags(session=Depends(get_session)):
+    """Get all available tags."""
+    tags = session.execute(select(Tag).order_by(Tag.name)).scalars().all()
+    return [
+        {
+            "id": tag.id,
+            "name": tag.name,
+            "color": tag.color,
+            "description": tag.description,
+            "created_at": tag.created_at.isoformat()
+        }
+        for tag in tags
+    ]
+
+@app.post("/tags")
+async def create_tag(tag_data: TagCreate, session=Depends(get_session)):
+    """Create a new tag."""
+    try:
+        # Check if tag with same name already exists
+        existing_tag = session.execute(
+            select(Tag).where(Tag.name == tag_data.name)
+        ).scalar_one_or_none()
+        
+        if existing_tag:
+            raise HTTPException(status_code=400, detail="Tag with this name already exists")
+        
+        new_tag = Tag(
+            name=tag_data.name,
+            color=tag_data.color,
+            description=tag_data.description
+        )
+        session.add(new_tag)
+        session.commit()
+        session.refresh(new_tag)
+        
+        return {
+            "id": new_tag.id,
+            "name": new_tag.name,
+            "color": new_tag.color,
+            "description": new_tag.description,
+            "created_at": new_tag.created_at.isoformat()
+        }
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create tag: {str(e)}")
+
+@app.delete("/tags/{tag_id}")
+async def delete_tag(tag_id: str, session=Depends(get_session)):
+    """Delete a tag."""
+    try:
+        tag = session.execute(select(Tag).where(Tag.id == tag_id)).scalar_one_or_none()
+        if not tag:
+            raise HTTPException(status_code=404, detail="Tag not found")
+        
+        session.delete(tag)
+        session.commit()
+        
+        return {"message": "Tag deleted successfully"}
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete tag: {str(e)}")
+
+@app.post("/events/{event_id}/tags")
+async def add_tags_to_event(
+    event_id: str, 
+    tag_data: EventTagCreate, 
+    session=Depends(get_session)
+):
+    """Add tags to an event."""
+    try:
+        # Verify event exists
+        event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        # Add each tag
+        for tag_id in tag_data.tag_ids:
+            # Verify tag exists
+            tag = session.execute(select(Tag).where(Tag.id == tag_id)).scalar_one_or_none()
+            if not tag:
+                continue  # Skip non-existent tags
+            
+            # Check if relationship already exists
+            existing = session.execute(
+                select(EventTag).where(
+                    EventTag.event_id == event_id,
+                    EventTag.tag_id == tag_id
+                )
+            ).scalar_one_or_none()
+            
+            if not existing:
+                event_tag = EventTag(event_id=event_id, tag_id=tag_id)
+                session.add(event_tag)
+        
+        session.commit()
+        
+        # Return updated event with tags
+        event_tags = session.execute(
+            select(Tag).join(EventTag).where(EventTag.event_id == event_id)
+        ).scalars().all()
+        
+        return {
+            "message": "Tags added successfully",
+            "event_id": event_id,
+            "tags": [
+                {
+                    "id": tag.id,
+                    "name": tag.name,
+                    "color": tag.color,
+                    "description": tag.description
+                }
+                for tag in event_tags
+            ]
+        }
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add tags: {str(e)}")
+
+@app.delete("/events/{event_id}/tags/{tag_id}")
+async def remove_tag_from_event(
+    event_id: str, 
+    tag_id: str, 
+    session=Depends(get_session)
+):
+    """Remove a tag from an event."""
+    try:
+        # Find the relationship
+        event_tag = session.execute(
+            select(EventTag).where(
+                EventTag.event_id == event_id,
+                EventTag.tag_id == tag_id
+            )
+        ).scalar_one_or_none()
+        
+        if not event_tag:
+            raise HTTPException(status_code=404, detail="Tag not found on this event")
+        
+        session.delete(event_tag)
+        session.commit()
+        
+        return {"message": "Tag removed from event successfully"}
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to remove tag: {str(e)}")
 
