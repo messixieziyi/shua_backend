@@ -1,6 +1,8 @@
 # 🎉 Meetup Service - Complete Event Management Platform
 
-A comprehensive meetup service backend with real-time chat, approval workflows, and advanced tagging system. Built with FastAPI, SQLAlchemy, and modern web technologies.
+一个完整的聚会管理服务，包含用户认证、实时聊天、审批流程和高级标签系统。使用 FastAPI、SQLAlchemy 和现代 Web 技术构建。
+
+> **📚 完整 API 文档**: 查看 [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) 获取所有端点的详细说明和使用示例。
 
 ## 🚀 Live Deployment
 
@@ -23,6 +25,22 @@ A comprehensive meetup service backend with real-time chat, approval workflows, 
 - `railway.toml` - Railway deployment configuration
 - `Procfile` - Process definition for Railway
 
+## 🔐 认证系统
+
+### **JWT Token 认证**
+- ✅ 用户注册 (`POST /auth/register`)
+- ✅ 用户登录 (`POST /auth/login`)
+- ✅ 用户登出 (`POST /auth/logout`)
+- ✅ 获取当前用户信息 (`GET /auth/me`)
+- ✅ Token 过期时间：7 天
+- ✅ 密码加密：Argon2 算法
+
+### **权限控制**
+- ✅ 除查看事件外，所有操作需要认证
+- ✅ 用户只能操作自己的数据
+- ✅ 事件创建者可以管理自己的事件
+- ✅ 只有主办方可以批准/拒绝加入请求
+
 ## 🎯 Current Features
 
 ### 🏷️ **Advanced Tagging System**
@@ -32,10 +50,11 @@ A comprehensive meetup service backend with real-time chat, approval workflows, 
 - **Visual Tags**: Color-coded badges with automatic contrast
 - **Sample Tags**: 15 pre-built categories (Beginner, Advanced, Outdoor, etc.)
 
-### 👥 **User Management**
-- **User Creation**: Add users with display names and emails
-- **User Profiles**: Complete user information system
-- **Random Generation**: Quick user creation with realistic data
+### 👥 **用户管理**
+- **用户注册**: 使用邮箱和密码注册
+- **用户登录**: JWT Token 认证
+- **用户信息**: 获取当前用户信息
+- **安全性**: 密码 Argon2 加密，Token 过期保护
 
 ### 📅 **Event Management**
 - **Event Creation**: Full event creation with all details
@@ -65,14 +84,28 @@ A comprehensive meetup service backend with real-time chat, approval workflows, 
 
 ## 🔧 API Endpoints
 
-### Core Endpoints
+> **📖 详细文档**: 查看 [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) 获取完整的 API 文档，包括：
+> - 所有端点的详细说明
+> - 请求/响应格式
+> - 前端使用示例
+> - 错误处理
+> - 认证方式
+
+### 认证端点
 ```
-GET    /                    - Main web interface
-GET    /health             - Health check
-GET    /users              - List all users
-POST   /users              - Create new user
-GET    /events             - List events (with tag filtering)
-POST   /events             - Create new event
+POST   /auth/register      - 用户注册 (公开)
+POST   /auth/login         - 用户登录 (公开)
+POST   /auth/logout        - 用户登出
+GET    /auth/me            - 获取当前用户信息
+```
+
+### 核心端点
+```
+GET    /                   - 主页界面
+GET    /health             - 健康检查 (公开)
+GET    /users              - 获取当前用户信息
+GET    /events             - 查看所有事件 (公开)
+POST   /events             - 创建新事件
 ```
 
 ### Request Management
@@ -132,26 +165,31 @@ WS     /ws/{user_id}       - Real-time chat connection
 
 ## 🚀 Quick Start
 
-### 1. Clone and Setup
+### 1. 克隆和设置
 ```bash
 git clone <repository-url>
-cd shua_backend
+cd Shua
 pip install -r requirements.txt
 ```
 
-### 2. Start Development Server
+### 2. 启动开发服务器
 ```bash
+# 方式 1: 使用 uvicorn
+uvicorn main:app --host 0.0.0.0 --port 9000
+
+# 方式 2: 直接运行 main.py
 python main.py
 ```
 
-### 3. Access Interface
-Open `http://localhost:8000` in your browser
+### 3. 访问界面
+打开浏览器访问 `http://localhost:9000`
 
-### 4. Initialize Sample Data
-1. Go to the "User Creation" panel (rightmost)
-2. Click "Seed Backend" to create sample tags
-3. Create some users and events
-4. Start using the system!
+### 4. 首次使用
+1. **注册账户**: 点击右上角 "Login" 按钮，切换到 "Register" 标签
+2. **登录**: 使用注册的邮箱和密码登录
+3. **创建标签**: 在右侧 "Tag Management" 面板创建标签
+4. **创建事件**: 在中间面板创建你的第一个事件
+5. **开始使用**: 浏览事件、发送请求、聊天交流！
 
 ## 🎮 How to Use the Interface
 
@@ -201,41 +239,59 @@ Open `http://localhost:8000` in your browser
 3. Use tag filter in Events Overview
 4. Tags appear as colored badges on events
 
-## 🔌 Frontend Integration
+## 🔌 前端集成指南
 
-### For Other AI/Developers
+### 给前端开发者
 
-This backend provides a complete REST API and WebSocket interface that can be easily integrated with any frontend framework:
+本后端提供完整的 REST API 和 WebSocket 接口，可以轻松集成到任何前端框架。
 
 #### API Base URL
 ```
 Production: https://sweet-creativity-production.up.railway.app/
-Development: http://localhost:8000
+Development: http://localhost:9000
 ```
 
-#### Key Integration Points
-1. **Authentication**: Use `X-User-Id` header for user identification
-2. **Real-time Chat**: Connect to WebSocket endpoint `/ws/{user_id}`
-3. **Event Data**: All endpoints return JSON with consistent structure
-4. **Tag System**: Full CRUD operations for tags and event-tag relationships
-
-#### Sample API Calls
+#### 认证集成
 ```javascript
-// Get events with tags
-fetch('/events?tag_filter=Beginner')
+// 1. 注册用户
+const response = await fetch('http://localhost:9000/auth/register', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        display_name: 'John Doe',
+        email: 'john@example.com',
+        password: 'password123'
+    })
+});
+const { access_token } = await response.json();
 
-// Create event with tags
-fetch('/events', {
-  method: 'POST',
-  headers: { 'X-User-Id': 'user123', 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    title: 'Morning Tennis',
-    tag_ids: ['tag1', 'tag2']
-  })
-})
+// 2. 保存 Token
+localStorage.setItem('auth_token', access_token);
 
-// WebSocket connection
-const ws = new WebSocket('/ws/user123')
+// 3. 使用 Token 调用 API
+const events = await fetch('http://localhost:9000/events', {
+    headers: {
+        'Authorization': `Bearer ${access_token}`,
+        'Content-Type': 'application/json'
+    }
+});
+```
+
+#### 完整示例代码
+查看 [API_DOCUMENTATION.md](./API_DOCUMENTATION.md) 获取：
+- 🔐 认证辅助函数
+- 📝 所有端点的使用示例
+- ⚠️ 错误处理最佳实践
+- 🎯 完整的业务流程示例
+
+#### WebSocket 连接
+```javascript
+// 注意：WebSocket 目前正在升级以支持 JWT 认证
+const ws = new WebSocket('ws://localhost:9000/ws/user123');
+ws.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    console.log('New message:', message);
+};
 ```
 
 ## 🛠️ Technical Stack

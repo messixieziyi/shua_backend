@@ -14,6 +14,156 @@
         .header {
             text-align: center;
             margin-bottom: 20px;
+            position: relative;
+        }
+        
+        .auth-section {
+            position: absolute;
+            top: 0;
+            right: 0;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        
+        .auth-button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .login-btn {
+            background-color: #4f46e5;
+            color: white;
+        }
+        
+        .logout-btn {
+            background-color: #ef4444;
+            color: white;
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #374151;
+            font-size: 14px;
+        }
+        
+        .login-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+        
+        .login-content {
+            background-color: white;
+            margin: 10% auto;
+            padding: 30px;
+            border-radius: 12px;
+            width: 400px;
+            max-width: 90%;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        }
+        
+        .login-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .login-tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .login-tab {
+            flex: 1;
+            padding: 12px;
+            text-align: center;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            color: #6b7280;
+        }
+        
+        .login-tab.active {
+            color: #4f46e5;
+            border-bottom-color: #4f46e5;
+        }
+        
+        .login-form {
+            display: none;
+        }
+        
+        .login-form.active {
+            display: block;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #374151;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        
+        .form-group input:focus {
+            outline: none;
+            border-color: #4f46e5;
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+        }
+        
+        .login-submit {
+            width: 100%;
+            padding: 12px;
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        
+        .login-submit:hover {
+            background-color: #4338ca;
+        }
+        
+        .login-submit:disabled {
+            background-color: #9ca3af;
+            cursor: not-allowed;
+        }
+        
+        .error-message {
+            color: #ef4444;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        
+        .success-message {
+            color: #10b981;
+            font-size: 14px;
+            margin-top: 10px;
         }
         .main-container {
             display: grid;
@@ -303,7 +453,62 @@
 <body>
     <div class="header">
         <h1>🎉 Meetup Service - Five Panel Interface</h1>
-        <p>Left: Event Participants | Middle: Event Creators | Right: Requests Overview | Far Right: Events Overview | Rightmost: User Creation</p>
+        <p>Left: Event Participants | Middle: Event Creators | Right: Requests Overview | Far Right: Events Overview | Rightmost: Tag Management</p>
+        <div class="auth-section">
+            <div id="user-info" class="user-info" style="display: none;">
+                <span id="user-name"></span>
+                <button id="logout-btn" class="auth-button logout-btn">Logout</button>
+            </div>
+            <button id="login-btn" class="auth-button login-btn" style="display: none;">Login</button>
+        </div>
+    </div>
+    
+    <!-- Login Modal -->
+    <div id="login-modal" class="login-modal">
+        <div class="login-content">
+            <div class="login-header">
+                <h2>Authentication</h2>
+            </div>
+            
+            <div class="login-tabs">
+                <div class="login-tab active" onclick="switchTab('login')">Login</div>
+                <div class="login-tab" onclick="switchTab('register')">Register</div>
+            </div>
+            
+            <!-- Login Form -->
+            <form id="login-form" class="login-form active">
+                <div class="form-group">
+                    <label for="login-email">Email:</label>
+                    <input type="email" id="login-email" required>
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password:</label>
+                    <input type="password" id="login-password" required>
+                </div>
+                <button type="submit" class="login-submit">Login</button>
+                <div id="login-error" class="error-message" style="display: none;"></div>
+                <div id="login-success" class="success-message" style="display: none;"></div>
+            </form>
+            
+            <!-- Register Form -->
+            <form id="register-form" class="login-form">
+                <div class="form-group">
+                    <label for="register-name">Display Name:</label>
+                    <input type="text" id="register-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="register-email">Email:</label>
+                    <input type="email" id="register-email" required>
+                </div>
+                <div class="form-group">
+                    <label for="register-password">Password:</label>
+                    <input type="password" id="register-password" required minlength="6">
+                </div>
+                <button type="submit" class="login-submit">Register</button>
+                <div id="register-error" class="error-message" style="display: none;"></div>
+                <div id="register-success" class="success-message" style="display: none;"></div>
+            </form>
+        </div>
     </div>
     
     <div class="main-container">
@@ -348,11 +553,9 @@
             <div class="panel-header organizers-header">🎯 Event Creators</div>
             <div class="panel-content">
                 <div class="sidebar">
-                    <div class="user-selector">
-                        <label for="creatorSelect">Create Event as:</label>
-                        <select id="creatorSelect">
-                            <option value="">Loading users...</option>
-                        </select>
+                    <div style="text-align: center; padding: 20px; background: #f8fafc; border-radius: 8px; margin-bottom: 20px;">
+                        <h4 style="margin: 0 0 10px 0; color: #374151;">Create Event</h4>
+                        <p style="margin: 0; color: #6b7280; font-size: 14px;">Events will be created under your account</p>
                     </div>
                 </div>
                 <div class="event-form">
@@ -454,28 +657,13 @@
             </div>
         </div>
 
-        <!-- FIFTH PANEL: USER CREATION -->
+        <!-- FIFTH PANEL: TAG MANAGEMENT -->
         <div class="panel">
-            <div class="panel-header users-header">➕ User Creation</div>
+            <div class="panel-header users-header">🏷️ Tag Management</div>
             <div class="panel-content">
                 <div class="user-form" style="padding: 20px;">
-                    <h4>Create New User</h4>
-                    <form id="userForm">
-                        <button type="button" onclick="generateRandomUser()" class="success" style="width: 100%; padding: 12px; margin-bottom: 15px;">🎲 Generate Random User</button>
-                        <div class="form-group">
-                            <label for="displayName">Display Name *</label>
-                            <input type="text" id="displayName" name="displayName" placeholder="e.g., Jane Doe" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="email">Email</label>
-                            <input type="email" id="email" name="email" placeholder="e.g., jane@example.com">
-                        </div>
-                        <button type="submit" class="primary" style="width: 100%; padding: 12px;">Create User</button>
-                    </form>
-                    <div id="recentUsers" style="margin-top: 20px;">
-                        <h5>Recent Users</h5>
-                        <div id="recentUsersList" style="max-height: 200px; overflow-y: auto;"></div>
-                    </div>
+                    <h4>Manage Tags</h4>
+                    <p style="color: #6b7280; font-size: 14px; margin-bottom: 20px;">Create and manage tags for events. Users can register through the login modal.</p>
                     
                     <div id="tagManagement" style="margin-top: 20px; border-top: 1px solid #e5e7eb; padding-top: 20px;">
                         <h5>Tag Management</h5>
@@ -497,6 +685,231 @@
 
     <script>
         const API_BASE = window.location.origin;
+        
+        // Authentication state
+        let currentUser = null;
+        let authToken = null;
+        
+        // Authentication functions
+        function checkAuth() {
+            const token = localStorage.getItem('auth_token');
+            const user = localStorage.getItem('current_user');
+            
+            if (token && user) {
+                try {
+                    authToken = token;
+                    currentUser = JSON.parse(user);
+                    showAuthenticatedUI();
+                } catch (error) {
+                    console.error('Error parsing stored user data:', error);
+                    logout();
+                }
+            } else {
+                showUnauthenticatedUI();
+            }
+        }
+        
+        function showAuthenticatedUI() {
+            document.getElementById('user-info').style.display = 'flex';
+            document.getElementById('login-btn').style.display = 'none';
+            document.getElementById('user-name').textContent = currentUser.display_name;
+            
+            // Enable authenticated features
+            loadData();
+        }
+        
+        function showUnauthenticatedUI() {
+            document.getElementById('user-info').style.display = 'none';
+            document.getElementById('login-btn').style.display = 'block';
+            
+            // Clear user data
+            currentUser = null;
+            authToken = null;
+            
+            // Show login modal
+            showLoginModal();
+        }
+        
+        function showLoginModal() {
+            document.getElementById('login-modal').style.display = 'block';
+        }
+        
+        function hideLoginModal() {
+            document.getElementById('login-modal').style.display = 'none';
+        }
+        
+        function switchTab(tab) {
+            // Update tab appearance
+            document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.login-form').forEach(f => f.classList.remove('active'));
+            
+            if (tab === 'login') {
+                document.querySelector('.login-tab:first-child').classList.add('active');
+                document.getElementById('login-form').classList.add('active');
+            } else {
+                document.querySelector('.login-tab:last-child').classList.add('active');
+                document.getElementById('register-form').classList.add('active');
+            }
+            
+            // Clear error messages
+            clearErrorMessages();
+        }
+        
+        function clearErrorMessages() {
+            document.querySelectorAll('.error-message, .success-message').forEach(msg => {
+                msg.style.display = 'none';
+                msg.textContent = '';
+            });
+        }
+        
+        async function login(email, password) {
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Store authentication data
+                    authToken = data.access_token;
+                    currentUser = {
+                        id: data.user_id,
+                        email: data.email,
+                        display_name: data.display_name
+                    };
+                    
+                    localStorage.setItem('auth_token', authToken);
+                    localStorage.setItem('current_user', JSON.stringify(currentUser));
+                    
+                    // Update UI
+                    showAuthenticatedUI();
+                    hideLoginModal();
+                    
+                    return true;
+                } else {
+                    throw new Error(data.detail || 'Login failed');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                throw error;
+            }
+        }
+        
+        async function register(displayName, email, password) {
+            try {
+                const response = await fetch(`${API_BASE}/auth/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        display_name: displayName,
+                        email: email,
+                        password: password
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Store authentication data
+                    authToken = data.access_token;
+                    currentUser = {
+                        id: data.user_id,
+                        email: data.email,
+                        display_name: data.display_name
+                    };
+                    
+                    localStorage.setItem('auth_token', authToken);
+                    localStorage.setItem('current_user', JSON.stringify(currentUser));
+                    
+                    // Update UI
+                    showAuthenticatedUI();
+                    hideLoginModal();
+                    
+                    return true;
+                } else {
+                    throw new Error(data.detail || 'Registration failed');
+                }
+            } catch (error) {
+                console.error('Registration error:', error);
+                throw error;
+            }
+        }
+        
+        function logout() {
+            // Clear stored data
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('current_user');
+            
+            // Update state
+            authToken = null;
+            currentUser = null;
+            
+            // Update UI
+            showUnauthenticatedUI();
+        }
+        
+        function getAuthHeaders() {
+            if (!authToken) {
+                throw new Error('Not authenticated');
+            }
+            return {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            };
+        }
+        
+        // Event listeners for authentication
+        document.getElementById('login-btn').addEventListener('click', showLoginModal);
+        document.getElementById('logout-btn').addEventListener('click', logout);
+        
+        // Login form submission
+        document.getElementById('login-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
+            
+            try {
+                await login(email, password);
+                clearErrorMessages();
+            } catch (error) {
+                const errorDiv = document.getElementById('login-error');
+                errorDiv.textContent = error.message;
+                errorDiv.style.display = 'block';
+            }
+        });
+        
+        // Register form submission
+        document.getElementById('register-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const displayName = document.getElementById('register-name').value;
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+            
+            try {
+                await register(displayName, email, password);
+                clearErrorMessages();
+            } catch (error) {
+                const errorDiv = document.getElementById('register-error');
+                errorDiv.textContent = error.message;
+                errorDiv.style.display = 'block';
+            }
+        });
+        
+        // Close modal when clicking outside
+        document.getElementById('login-modal').addEventListener('click', (e) => {
+            if (e.target.id === 'login-modal') {
+                hideLoginModal();
+            }
+        });
         let currentUserId = null;
         let currentEventId = null;
         let users = [];
@@ -677,9 +1090,27 @@
             try {
                 console.log('Loading data...');
                 
-                const usersResponse = await fetch(`${API_BASE}/users`);
-                users = await usersResponse.json();
-                console.log('Users loaded:', users);
+                // Load current user (requires authentication)
+                const usersResponse = await fetch(`${API_BASE}/users`, {
+                    headers: getAuthHeaders()
+                });
+                
+                if (usersResponse.status === 401) {
+                    throw new Error('Authentication required');
+                }
+                
+                const currentUserData = await usersResponse.json();
+                console.log('Current user loaded:', currentUserData);
+                
+                // Store as array for compatibility with existing code
+                users = [currentUserData];
+                
+                // Also store all users we know about (from events, requests, etc.)
+                // This will be populated as we load events and requests
+                if (!window.allKnownUsers) {
+                    window.allKnownUsers = new Map();
+                }
+                window.allKnownUsers.set(currentUserData.id, currentUserData);
                 
                 const userSelect = document.getElementById('userSelect');
                 userSelect.innerHTML = '<option value="">Select a user...</option>';
@@ -690,14 +1121,7 @@
                     userSelect.appendChild(option);
                 });
 
-                const creatorSelect = document.getElementById('creatorSelect');
-                creatorSelect.innerHTML = '<option value="">Select a creator...</option>';
-                users.forEach(user => {
-                    const option = document.createElement('option');
-                    option.value = user.id;
-                    option.textContent = `${user.display_name} (ID: ${user.id})`;
-                    creatorSelect.appendChild(option);
-                });
+                // No need to populate creator select anymore - events are created by current user
 
                 await loadEvents();
                 await loadRequests(); // Load requests from backend
@@ -728,7 +1152,14 @@
 
         async function loadRequests() {
             try {
-                const requestsResponse = await fetch(`${API_BASE}/requests/all`);
+                const requestsResponse = await fetch(`${API_BASE}/requests/all`, {
+                    headers: getAuthHeaders()
+                });
+                
+                if (requestsResponse.status === 401) {
+                    throw new Error('Authentication required');
+                }
+                
                 requests = await requestsResponse.json();
                 console.log('Requests loaded:', requests);
             } catch (error) {
@@ -795,9 +1226,7 @@
             
             try {
                 const response = await fetch(`${API_BASE}/threads`, {
-                    headers: {
-                        "X-User-Id": currentUserId.toString()
-                    }
+                    headers: getAuthHeaders()
                 });
                 
                 if (response.ok) {
@@ -819,9 +1248,7 @@
             
             try {
                 const response = await fetch(`${API_BASE}/threads/${currentThreadId}/messages`, {
-                    headers: {
-                        "X-User-Id": currentUserId.toString()
-                    }
+                    headers: getAuthHeaders()
                 });
                 
                 if (response.ok) {
@@ -1099,10 +1526,7 @@
                 // Send message to backend
                 const response = await fetch(`${API_BASE}/threads/${threadId}/messages`, {
                     method: 'POST',
-                    headers: {
-                        "X-User-Id": currentUserId.toString(),
-                        'Content-Type': 'application/json',
-                    },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({
                         client_msg_id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                         body: message
@@ -1147,10 +1571,7 @@
             try {
                 const response = await fetch(`${API_BASE}/requests`, {
                     method: 'POST',
-                    headers: {
-                        "X-User-Id": currentUserId.toString(),
-                        'Content-Type': 'application/json',
-                    },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({
                         event_id: currentEventId, // Keep as string, don't convert to int
                         host_id: selectedEvent.created_by, // Use the actual event creator as host
@@ -1189,53 +1610,108 @@
         document.getElementById('eventForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
-            const creatorId = document.getElementById('creatorSelect').value;
-            if (!creatorId) {
-                alert('Please select a creator first!');
+            console.log('Event form submitted');
+            console.log('Current user:', currentUser);
+            console.log('Auth token:', authToken ? 'Present' : 'Missing');
+            
+            // Use current logged-in user as creator
+            if (!currentUser) {
+                alert('❌ Please login first!');
+                return;
+            }
+
+            // Validate required fields
+            const title = document.getElementById('eventTitle').value.trim();
+            const eventDate = document.getElementById('eventDate').value;
+            const eventTime = document.getElementById('eventTime').value;
+            const capacity = document.getElementById('eventCapacity').value;
+            const activityType = document.getElementById('eventActivity').value;
+
+            if (!title) {
+                alert('❌ Please enter an event title');
+                return;
+            }
+
+            if (!eventDate || !eventTime) {
+                alert('❌ Please select both date and time for the event');
+                return;
+            }
+
+            // Create date and validate
+            const startsAt = new Date(eventDate + 'T' + eventTime);
+            if (isNaN(startsAt.getTime())) {
+                alert('❌ Invalid date or time');
                 return;
             }
 
             const eventData = {
-                title: document.getElementById('eventTitle').value,
+                title: title,
                 description: document.getElementById('eventDescription').value,
-                starts_at: new Date(document.getElementById('eventDate').value + 'T' + document.getElementById('eventTime').value).toISOString(),
-                capacity: parseInt(document.getElementById('eventCapacity').value),
-                activity_type: document.getElementById('eventActivity').value,
+                starts_at: startsAt.toISOString(),
+                capacity: parseInt(capacity),
+                activity_type: activityType,
                 location: document.getElementById('eventLocation').value,
                 address: document.getElementById('eventAddress').value,
-                created_by: creatorId,
+                created_by: currentUser.id,
                 tag_ids: selectedTags
             };
+
+            console.log('Event data:', eventData);
+            console.log('API base:', API_BASE);
 
             try {
                 const response = await fetch(`${API_BASE}/events`, {
                     method: 'POST',
-                    headers: {
-                        "X-User-Id": creatorId,
-                        'Content-Type': 'application/json',
-                    },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify(eventData)
                 });
                 
+                console.log('Response status:', response.status);
+                console.log('Response ok:', response.ok);
+                
                 if (response.ok) {
                     const newEvent = await response.json();
+                    console.log('New event created:', newEvent);
                     events.push(newEvent);
                     
                     // Refresh all event lists
-                    await loadEvents();
-                    updateEventsOverview();
+                    try {
+                        await loadEvents();
+                        console.log('Events reloaded successfully');
+                    } catch (loadError) {
+                        console.error('Error loading events:', loadError);
+                    }
+                    
+                    try {
+                        updateEventsOverview();
+                        console.log('Events overview updated successfully');
+                    } catch (updateError) {
+                        console.error('Error updating events overview:', updateError);
+                    }
                     
                     // Clear form
                     document.getElementById('eventForm').reset();
                     document.getElementById('eventCapacity').value = 10;
                     
+                    // Clear selected tags
+                    selectedTags = [];
+                    updateTagSelector();
+                    
                     alert('✅ Event created successfully!');
                 } else {
-                    throw new Error('Failed to create event');
+                    const errorText = await response.text();
+                    console.log('Error response:', errorText);
+                    throw new Error(`Failed to create event: ${response.status} ${errorText}`);
                 }
             } catch (error) {
                 console.error('Error creating event:', error);
-                alert('❌ Sorry, there was an error creating the event. Please try again.');
+                if (error.message === 'Not authenticated') {
+                    alert('❌ Please login first to create events.');
+                    showUnauthenticatedUI();
+                } else {
+                    // Show detailed error message
+                    alert(`❌ Failed to create event: ${error.message}\n\nPlease check the browser console for more details.`);
+                }
             }
         });
 
@@ -1252,8 +1728,20 @@
             const groupedRequests = {};
             requests.forEach(request => {
                 const hostId = request.host_id || 1;
-                const hostName = users.find(u => u.id == hostId)?.display_name || `Organizer ${hostId}`;
-                const eventName = events.find(e => e.id == request.event_id)?.title || `Event ${request.event_id}`;
+                let hostName;
+                if (hostId === currentUser?.id) {
+                    hostName = currentUser.display_name;
+                } else {
+                    const host = users.find(u => u.id == hostId);
+                    if (host) {
+                        hostName = host.display_name;
+                    } else if (window.allKnownUsers?.has(hostId)) {
+                        hostName = window.allKnownUsers.get(hostId).display_name;
+                    } else {
+                        hostName = `User ${String(hostId).substring(0, 8)}...`;
+                    }
+                }
+                const eventName = events.find(e => e.id == request.event_id)?.title || `Event ${String(request.event_id).substring(0, 8)}...`;
                 
                 if (!groupedRequests[hostId]) {
                     groupedRequests[hostId] = {
@@ -1336,8 +1824,20 @@
                 const eventDiv = document.createElement('div');
                 eventDiv.className = 'event-item';
                 
-                const organizer = users.find(u => u.id == event.created_by);
-                const organizerName = organizer ? organizer.display_name : `User ${event.created_by}`;
+                // Find organizer from users array or from current user
+                let organizerName = 'Unknown User';
+                if (event.created_by === currentUser?.id) {
+                    organizerName = currentUser.display_name;
+                } else {
+                    const organizer = users.find(u => u.id == event.created_by);
+                    if (organizer) {
+                        organizerName = organizer.display_name;
+                    } else if (window.allKnownUsers?.has(event.created_by)) {
+                        organizerName = window.allKnownUsers.get(event.created_by).display_name;
+                    } else {
+                        organizerName = `User ${event.created_by.substring(0, 8)}...`;
+                    }
+                }
                 
                 // Get participants from requests
                 const eventRequests = requests.filter(r => r.event_id == event.id && r.status === 'ACCEPTED');
@@ -1399,10 +1899,7 @@
                 // Make API call to approve the request
                 const response = await fetch(`${API_BASE}/requests/${requestId}/act`, {
                     method: 'POST',
-                    headers: {
-                        "X-User-Id": request.host_id.toString(),
-                        'Content-Type': 'application/json',
-                    },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({
                         action: 'accept'
                     })
@@ -1445,10 +1942,7 @@
                 // Make API call to decline the request
                 const response = await fetch(`${API_BASE}/requests/${requestId}/act`, {
                     method: 'POST',
-                    headers: {
-                        "X-User-Id": request.host_id.toString(),
-                        'Content-Type': 'application/json',
-                    },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({
                         action: 'decline'
                     })
@@ -1480,66 +1974,7 @@
             }
         }
 
-        // User form event listener
-        document.getElementById('userForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            
-            const displayName = document.getElementById('displayName').value;
-            const email = document.getElementById('email').value;
-            
-            if (!displayName) {
-                alert('Please enter a display name');
-                return;
-            }
-            
-            try {
-                const response = await fetch(`${API_BASE}/users`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        display_name: displayName,
-                        email: email || null
-                    })
-                });
-                
-                if (response.ok) {
-                    const newUser = await response.json();
-                    addParticipantMessage(`✅ User "${displayName}" created successfully!`, 'system');
-                    
-                    // Clear form
-                    document.getElementById('displayName').value = '';
-                    document.getElementById('email').value = '';
-                    
-                    // Refresh users list
-                    await loadData();
-                    updateRecentUsersList(newUser);
-                } else {
-                    throw new Error('Failed to create user');
-                }
-            } catch (error) {
-                console.error('Error creating user:', error);
-                addParticipantMessage('❌ Failed to create user. Please try again.', 'system');
-            }
-        });
-
-        function updateRecentUsersList(newUser) {
-            const recentUsersList = document.getElementById('recentUsersList');
-            const userDiv = document.createElement('div');
-            userDiv.style.cssText = 'padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; margin-bottom: 8px; background: #f9fafb;';
-            userDiv.innerHTML = `
-                <strong>${newUser.display_name}</strong><br>
-                <small>ID: ${newUser.id}</small>
-                ${newUser.email ? `<br><small>Email: ${newUser.email}</small>` : ''}
-            `;
-            recentUsersList.insertBefore(userDiv, recentUsersList.firstChild);
-            
-            // Keep only last 5 users
-            while (recentUsersList.children.length > 5) {
-                recentUsersList.removeChild(recentUsersList.lastChild);
-            }
-        }
+        // User creation removed - users should register through /auth/register
 
         // Tag management functions
         function getContrastColor(hexColor) {
@@ -1557,7 +1992,9 @@
 
         async function loadTags() {
             try {
-                const response = await fetch(`${API_BASE}/tags`);
+                const response = await fetch(`${API_BASE}/tags`, {
+                    headers: getAuthHeaders()
+                });
                 tags = await response.json();
                 console.log('Tags loaded:', tags);
                 updateTagsList();
@@ -1691,9 +2128,7 @@
             try {
                 const response = await fetch(`${API_BASE}/tags`, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: getAuthHeaders(),
                     body: JSON.stringify({
                         name: name,
                         color: color,
@@ -1729,7 +2164,8 @@
 
             try {
                 const response = await fetch(`${API_BASE}/tags/${tagId}`, {
-                    method: 'DELETE'
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
                 });
 
                 if (response.ok) {
@@ -1782,9 +2218,7 @@
 
                     const response = await fetch(`${API_BASE}/tags`, {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
+                        headers: getAuthHeaders(),
                         body: JSON.stringify(tagData)
                     });
 
@@ -1818,7 +2252,8 @@
         async function seedTagsFromBackend() {
             try {
                 const response = await fetch(`${API_BASE}/dev/seed-tags`, {
-                    method: 'POST'
+                    method: 'POST',
+                    headers: getAuthHeaders()
                 });
 
                 if (response.ok) {
@@ -1847,7 +2282,9 @@
         // Initialize
         document.getElementById('userSelect').addEventListener('change', selectParticipantUser);
         document.getElementById('eventSelect').addEventListener('change', selectEvent);
-        loadData();
+        
+        // Check authentication status on page load
+        checkAuth();
     </script>
 </body>
 </html>

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Event Creation Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        button { background: #007bff; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .error { color: red; margin-top: 10px; }
+        .success { color: green; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Event Creation Test</h1>
+    
+    <div id="auth-section">
+        <h2>Authentication</h2>
+        <div id="login-form">
+            <div class="form-group">
+                <label for="email">Email:</label>
+                <input type="email" id="email" value="testuser@example.com">
+            </div>
+            <div class="form-group">
+                <label for="password">Password:</label>
+                <input type="password" id="password" value="test123">
+            </div>
+            <button onclick="login()">Login</button>
+        </div>
+        <div id="user-info" style="display: none;">
+            <p>Logged in as: <span id="user-name"></span></p>
+            <button onclick="logout()">Logout</button>
+        </div>
+    </div>
+    
+    <div id="event-form" style="display: none;">
+        <h2>Create Event</h2>
+        <form id="eventForm">
+            <div class="form-group">
+                <label for="title">Event Title *</label>
+                <input type="text" id="title" required>
+            </div>
+            <div class="form-group">
+                <label for="description">Description</label>
+                <textarea id="description"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="date">Date *</label>
+                <input type="date" id="date" required>
+            </div>
+            <div class="form-group">
+                <label for="time">Time *</label>
+                <input type="time" id="time" required>
+            </div>
+            <div class="form-group">
+                <label for="capacity">Capacity *</label>
+                <input type="number" id="capacity" min="1" value="5" required>
+            </div>
+            <div class="form-group">
+                <label for="activity">Activity Type *</label>
+                <select id="activity" required>
+                    <option value="tennis">Tennis</option>
+                    <option value="basketball">Basketball</option>
+                    <option value="yoga">Yoga</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="location">Location</label>
+                <input type="text" id="location">
+            </div>
+            <button type="submit">Create Event</button>
+        </form>
+    </div>
+    
+    <div id="result"></div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let authToken = null;
+        let currentUser = null;
+
+        async function login() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    authToken = data.access_token;
+                    currentUser = {
+                        id: data.user_id,
+                        display_name: data.display_name,
+                        email: data.email
+                    };
+                    
+                    document.getElementById('login-form').style.display = 'none';
+                    document.getElementById('user-info').style.display = 'block';
+                    document.getElementById('event-form').style.display = 'block';
+                    document.getElementById('user-name').textContent = currentUser.display_name;
+                    
+                    showResult('Login successful!', 'success');
+                } else {
+                    const error = await response.text();
+                    showResult(`Login failed: ${error}`, 'error');
+                }
+            } catch (error) {
+                showResult(`Login error: ${error.message}`, 'error');
+            }
+        }
+
+        function logout() {
+            authToken = null;
+            currentUser = null;
+            document.getElementById('login-form').style.display = 'block';
+            document.getElementById('user-info').style.display = 'none';
+            document.getElementById('event-form').style.display = 'none';
+            document.getElementById('eventForm').reset();
+            showResult('Logged out', 'success');
+        }
+
+        function getAuthHeaders() {
+            if (!authToken) {
+                throw new Error('Not authenticated');
+            }
+            return {
+                'Authorization': `Bearer ${authToken}`,
+                'Content-Type': 'application/json'
+            };
+        }
+
+        document.getElementById('eventForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            if (!currentUser) {
+                showResult('Please login first!', 'error');
+                return;
+            }
+
+            const eventData = {
+                title: document.getElementById('title').value,
+                description: document.getElementById('description').value,
+                starts_at: new Date(document.getElementById('date').value + 'T' + document.getElementById('time').value).toISOString(),
+                capacity: parseInt(document.getElementById('capacity').value),
+                activity_type: document.getElementById('activity').value,
+                location: document.getElementById('location').value,
+                created_by: currentUser.id,
+                tag_ids: []
+            };
+
+            console.log('Creating event:', eventData);
+
+            try {
+                const response = await fetch(`${API_BASE}/events`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify(eventData)
+                });
+                
+                console.log('Response status:', response.status);
+                
+                if (response.ok) {
+                    const newEvent = await response.json();
+                    console.log('Event created:', newEvent);
+                    showResult(`Event created successfully! ID: ${newEvent.id}`, 'success');
+                    document.getElementById('eventForm').reset();
+                } else {
+                    const errorText = await response.text();
+                    console.log('Error response:', errorText);
+                    showResult(`Failed to create event: ${response.status} ${errorText}`, 'error');
+                }
+            } catch (error) {
+                console.error('Error creating event:', error);
+                showResult(`Error: ${error.message}`, 'error');
+            }
+        });
+
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = type;
+        }
+
+        // Set default date to tomorrow
+        const tomorrow = new Date();
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        document.getElementById('date').value = tomorrow.toISOString().split('T')[0];
+        document.getElementById('time').value = '10:00';
+    </script>
+</body>
+</html>

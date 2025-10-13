@@ -36,7 +36,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.websockets import WebSocketState
-from pydantic import BaseModel, Field
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field, EmailStr
 
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, String, Text, UniqueConstraint, func, select, create_engine, text,
@@ -44,6 +45,12 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
+
+# Authentication imports
+from passlib.context import CryptContext
+from argon2 import PasswordHasher
+from jose import JWTError, jwt
+from datetime import timedelta
 
 # ---------------------
 # Database
@@ -74,6 +81,16 @@ engine = create_engine(
 )
 print("✅ Database engine created successfully")
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+# ---------------------
+# Authentication Setup
+# ---------------------
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production-please-make-it-secure")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+security = HTTPBearer()
 
 class Base(DeclarativeBase):
     pass
@@ -110,7 +127,8 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     display_name: Mapped[str] = mapped_column(String(120))
-    email: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    email: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
 
 class Event(Base):
     __tablename__ = "events"
@@ -128,7 +146,7 @@ class Event(Base):
 class Request(Base):
     __tablename__ = "requests"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    event_id: Mapped[str] = mapped_column(String(36))
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"))
     guest_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     host_id: Mapped[str] = mapped_column(ForeignKey("users.id"))
     status: Mapped[RequestStatus] = mapped_column(SQLEnum(RequestStatus), default=RequestStatus.SUBMITTED)
@@ -153,7 +171,7 @@ class Thread(Base):
     scope: Mapped[ThreadScope] = mapped_column(SQLEnum(ThreadScope), default=ThreadScope.REQUEST)
     request_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requests.id", ondelete="CASCADE"))
     booking_id: Mapped[Optional[str]] = mapped_column(ForeignKey("bookings.id", ondelete="CASCADE"))
-    event_id: Mapped[str] = mapped_column(String(36))
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"))
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
 
 class ThreadParticipant(Base):
@@ -238,6 +256,60 @@ class EventTagCreate(BaseModel):
     tag_ids: list[str]
 
 # ---------------------
+# Authentication Schemas
+# ---------------------
+class UserRegister(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=6)
+    display_name: str = Field(min_length=1, max_length=120)
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    user_id: str
+    display_name: str
+    email: str
+
+class UserOut(BaseModel):
+    id: str
+    email: str
+    display_name: str
+
+# ---------------------
+# Authentication Utilities
+# ---------------------
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against its hash."""
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    """Hash a password."""
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+    """Create a JWT access token."""
+    to_encode = data.copy()
+    if expires_delta:
+        expire = dt.datetime.utcnow() + expires_delta
+    else:
+        expire = dt.datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+def decode_access_token(token: str) -> Optional[dict]:
+    """Decode and validate a JWT token."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        return None
+
+# ---------------------
 # Dependencies
 # ---------------------
 def get_session():
@@ -247,7 +319,41 @@ def get_session():
     finally:
         db.close()
 
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    session = Depends(get_session)
+) -> User:
+    """Get the current authenticated user from JWT token."""
+    token = credentials.credentials
+    payload = decode_access_token(token)
+    
+    if payload is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    user_id: str = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    user = session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    return user
+
 def get_user_id(x_user_id: str = Header(None)):
+    """Legacy dependency - kept for backward compatibility but deprecated."""
     if not x_user_id:
         raise HTTPException(401, "Missing X-User-Id header")
     return x_user_id
@@ -300,41 +406,117 @@ app = FastAPI(title="Meetup Chat & Booking API", version="0.4.0", lifespan=lifes
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
 
 # ---------------------
-
-@app.get("/users")
-async def list_users(session=Depends(get_session)):
-    """Get all users."""
-    users = session.execute(select(User)).scalars().all()
-    return [{"id": u.id, "display_name": u.display_name} for u in users]
-
-@app.post("/users")
-async def create_user(user_data: dict, session=Depends(get_session)):
-    """Create a new user."""
+# Authentication Endpoints
+# ---------------------
+@app.post("/auth/register", response_model=Token)
+async def register(user_data: UserRegister, session=Depends(get_session)):
+    """Register a new user."""
     try:
-        display_name = user_data.get("display_name")
-        email = user_data.get("email")
+        # Check if user with email already exists
+        existing_user = session.execute(
+            select(User).where(User.email == user_data.email)
+        ).scalar_one_or_none()
         
-        if not display_name:
-            raise HTTPException(status_code=400, detail="display_name is required")
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
         
         # Create new user
-        new_user = User(display_name=display_name, email=email)
+        hashed_password = get_password_hash(user_data.password)
+        new_user = User(
+            email=user_data.email,
+            display_name=user_data.display_name,
+            hashed_password=hashed_password
+        )
         session.add(new_user)
         session.commit()
         session.refresh(new_user)
         
-        return {
-            "id": new_user.id,
-            "display_name": new_user.display_name,
-            "email": new_user.email
-        }
+        # Create access token
+        access_token = create_access_token(data={"sub": new_user.id})
+        
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            user_id=new_user.id,
+            display_name=new_user.display_name,
+            email=new_user.email
+        )
+    except HTTPException:
+        session.rollback()
+        raise
     except Exception as e:
         session.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to register user: {str(e)}"
+        )
+
+@app.post("/auth/login", response_model=Token)
+async def login(credentials: UserLogin, session=Depends(get_session)):
+    """Login with email and password."""
+    try:
+        # Find user by email
+        user = session.execute(
+            select(User).where(User.email == credentials.email)
+        ).scalar_one_or_none()
+        
+        if not user or not verify_password(credentials.password, user.hashed_password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Create access token
+        access_token = create_access_token(data={"sub": user.id})
+        
+        return Token(
+            access_token=access_token,
+            token_type="bearer",
+            user_id=user.id,
+            display_name=user.display_name,
+            email=user.email
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to login: {str(e)}"
+        )
+
+@app.post("/auth/logout")
+async def logout(current_user: User = Depends(get_current_user)):
+    """Logout (client should discard the token)."""
+    # For JWT tokens, logout is typically handled client-side by discarding the token
+    # If you need server-side token revocation, you'd need to maintain a blacklist
+    return {"message": "Successfully logged out"}
+
+@app.get("/auth/me", response_model=UserOut)
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """Get current authenticated user information."""
+    return UserOut(
+        id=current_user.id,
+        email=current_user.email,
+        display_name=current_user.display_name
+    )
+
+# ---------------------
+# User Endpoints
+# ---------------------
+@app.get("/users")
+async def get_current_user_info(current_user: User = Depends(get_current_user), session=Depends(get_session)):
+    """Get current user information. Requires authentication."""
+    return {"id": current_user.id, "display_name": current_user.display_name, "email": current_user.email}
+
+# POST /users endpoint removed - users should be created through /auth/register
 
 @app.get("/events")
 async def list_events(session=Depends(get_session), tag_filter: Optional[str] = None):
-    """Get all events, optionally filtered by tag."""
+    """Get all events, optionally filtered by tag. Public endpoint - no authentication required."""
     query = select(Event)
     
     if tag_filter:
@@ -374,8 +556,12 @@ async def list_events(session=Depends(get_session), tag_filter: Optional[str] = 
     return result
 
 @app.post("/events")
-async def create_event(event_data: dict, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create a new event."""
+async def create_event(
+    event_data: dict, 
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Create a new event. Requires authentication."""
     try:
         title = event_data.get("title")
         description = event_data.get("description")
@@ -384,7 +570,8 @@ async def create_event(event_data: dict, user_id: str = Depends(get_user_id), se
         activity_type = event_data.get("activity_type")
         location = event_data.get("location")
         address = event_data.get("address")
-        created_by = event_data.get("created_by", user_id)
+        # Force use current user as creator for security
+        created_by = current_user.id
         
         if not title:
             raise HTTPException(status_code=400, detail="title is required")
@@ -455,20 +642,27 @@ async def create_event(event_data: dict, user_id: str = Depends(get_user_id), se
         raise HTTPException(status_code=500, detail=f"Failed to create event: {str(e)}")
 
 @app.post("/rsvps")
-async def create_rsvp(event_id: str, user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Create an RSVP for an event."""
+async def create_rsvp(
+    event_id: str, 
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Create an RSVP for an event. Requires authentication."""
     # For now, just return success - you can implement full RSVP logic later
-    return {"message": "RSVP created", "event_id": event_id, "user_id": user_id}
+    return {"message": "RSVP created", "event_id": event_id, "user_id": current_user.id}
 # Endpoints
 # ---------------------
 @app.get("/requests")
-async def get_requests(user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Get all requests where the user is either a guest or host."""
+async def get_requests(
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get all requests where the user is either a guest or host. Requires authentication."""
     try:
         # Get requests where user is guest or host
         user_requests = session.execute(
             select(Request)
-            .where((Request.guest_id == user_id) | (Request.host_id == user_id))
+            .where((Request.guest_id == current_user.id) | (Request.host_id == current_user.id))
             .order_by(Request.created_at.desc())
         ).scalars().all()
         
@@ -495,12 +689,16 @@ async def get_requests(user_id: str = Depends(get_user_id), session=Depends(get_
         raise HTTPException(500, f"Failed to get requests: {str(e)}")
 
 @app.get("/requests/all")
-async def get_all_requests(session=Depends(get_session)):
-    """Get all requests (for admin/overview purposes)."""
+async def get_all_requests(
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get all requests where user is involved (guest or host). Requires authentication."""
     try:
-        # Get all requests
+        # Get requests where user is guest or host
         all_requests = session.execute(
             select(Request)
+            .where((Request.guest_id == current_user.id) | (Request.host_id == current_user.id))
             .order_by(Request.created_at.desc())
         ).scalars().all()
         
@@ -527,31 +725,34 @@ async def get_all_requests(session=Depends(get_session)):
         raise HTTPException(500, f"Failed to get all requests: {str(e)}")
 
 @app.post("/requests")
-async def create_request(payload: RequestCreate, user_id: str = Depends(get_user_id), session=Depends(get_session)):
+async def create_request(
+    payload: RequestCreate, 
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Create a request for an event. Requires authentication."""
     try:
         # Validate that the event exists
         event = session.execute(select(Event).where(Event.id == payload.event_id)).scalar_one_or_none()
         if not event:
             raise HTTPException(404, "Event not found")
         
-        # Validate that the host exists
-        host = session.execute(select(User).where(User.id == payload.host_id)).scalar_one_or_none()
-        if not host:
-            raise HTTPException(404, "Host not found")
+        # Use current user as guest (requester)
+        guest_id = current_user.id
         
         # Check if user already has a request for this event
         existing_request = session.execute(
             select(Request).where(
                 Request.event_id == payload.event_id,
-                Request.guest_id == user_id
+                Request.guest_id == current_user.id
             )
         ).scalar_one_or_none()
         
         if existing_request:
             raise HTTPException(400, "You already have a request for this event")
         
-        # Create the request
-        req = Request(event_id=payload.event_id, guest_id=user_id, host_id=payload.host_id, auto_accept=payload.auto_accept)
+        # Create the request - use event creator as host
+        req = Request(event_id=payload.event_id, guest_id=current_user.id, host_id=event.created_by, auto_accept=payload.auto_accept)
         session.add(req)
         session.flush()
 
@@ -584,12 +785,18 @@ async def create_request(payload: RequestCreate, user_id: str = Depends(get_user
         raise HTTPException(500, f"Failed to create request: {str(e)}")
 
 @app.post("/requests/{request_id}/act")
-async def act_on_request(request_id: str, payload: RequestAction, user_id: str = Depends(get_user_id), session=Depends(get_session)):
+async def act_on_request(
+    request_id: str, 
+    payload: RequestAction, 
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Accept or decline a request. Requires authentication."""
     try:
         req = session.execute(select(Request).where(Request.id == request_id)).scalar_one_or_none()
         if not req:
             raise HTTPException(404, "Request not found")
-        if user_id != req.host_id:
+        if current_user.id != req.host_id:
             raise HTTPException(403, "Only the host can approve or decline requests")
 
         thread = session.execute(select(Thread).where(Thread.request_id == req.id)).scalar_one_or_none()
@@ -775,12 +982,15 @@ class ThreadListOut(BaseModel):
 # Chat Endpoints
 # ---------------------
 @app.get("/threads", response_model=ThreadListOut)
-async def get_user_threads(user_id: str = Depends(get_user_id), session=Depends(get_session)):
-    """Get all threads where the user is a participant."""
+async def get_user_threads(
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get all threads where the user is a participant. Requires authentication."""
     # Get thread IDs where user is a participant
     participant_threads = session.execute(
         select(ThreadParticipant.thread_id)
-        .where(ThreadParticipant.user_id == user_id)
+        .where(ThreadParticipant.user_id == current_user.id)
     ).scalars().all()
     
     if not participant_threads:
@@ -818,14 +1028,14 @@ async def get_thread_messages(
     thread_id: str, 
     limit: int = 50, 
     offset: int = 0,
-    user_id: str = Depends(get_user_id), 
+    current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Get messages for a specific thread."""
+    """Get messages for a specific thread. Requires authentication."""
     # Verify user has access to thread
     participant = session.execute(
         select(ThreadParticipant)
-        .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == user_id)
+        .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == current_user.id)
     ).scalar_one_or_none()
     
     if not participant:
@@ -846,10 +1056,10 @@ async def get_thread_messages(
 async def send_message(
     thread_id: str,
     payload: ThreadMessageIn,
-    user_id: str = Depends(get_user_id),
+    current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Send a message to a thread."""
+    """Send a message to a thread. Requires authentication."""
     try:
         # Get thread and verify it exists
         thread = session.execute(select(Thread).where(Thread.id == thread_id)).scalar_one_or_none()
@@ -859,7 +1069,7 @@ async def send_message(
         # Verify user has access to thread
         participant = session.execute(
             select(ThreadParticipant)
-            .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == user_id)
+            .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == current_user.id)
         ).scalar_one_or_none()
         
         if not participant:
@@ -880,7 +1090,7 @@ async def send_message(
                 raise HTTPException(404, "Request not found")
             
             # Allow host or accepted guest
-            if user_id != request.host_id and request.status != RequestStatus.ACCEPTED:
+            if current_user.id != request.host_id and request.status != RequestStatus.ACCEPTED:
                 raise HTTPException(403, "Only the host or accepted participants can send messages")
         
         elif thread.scope == ThreadScope.BOOKING:
@@ -893,13 +1103,13 @@ async def send_message(
                 raise HTTPException(404, "Request not found")
             
             # Allow host or accepted guest
-            if user_id != request.host_id and request.status != RequestStatus.ACCEPTED:
+            if current_user.id != request.host_id and request.status != RequestStatus.ACCEPTED:
                 raise HTTPException(403, "Only the host or accepted participants can send messages")
         
         # Create message
         message = Message(
             thread_id=thread_id,
-            sender_id=user_id,
+            sender_id=current_user.id,
             client_msg_id=payload.client_msg_id,
             kind=MessageKind.USER,
             body=payload.body,
@@ -931,14 +1141,14 @@ async def send_message(
 async def mark_messages_read(
     thread_id: str,
     last_read_seq: int,
-    user_id: str = Depends(get_user_id),
+    current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Mark messages as read up to a specific sequence number."""
+    """Mark messages as read up to a specific sequence number. Requires authentication."""
     # Verify user has access to thread
     participant = session.execute(
         select(ThreadParticipant)
-        .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == user_id)
+        .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == current_user.id)
     ).scalar_one_or_none()
     
     if not participant:
@@ -947,7 +1157,7 @@ async def mark_messages_read(
     # Update or create read status
     read_status = session.execute(
         select(MessageRead)
-        .where(MessageRead.thread_id == thread_id, MessageRead.user_id == user_id)
+        .where(MessageRead.thread_id == thread_id, MessageRead.user_id == current_user.id)
     ).scalar_one_or_none()
     
     if read_status:
@@ -955,7 +1165,7 @@ async def mark_messages_read(
     else:
         read_status = MessageRead(
             thread_id=thread_id,
-            user_id=user_id,
+            user_id=current_user.id,
             last_read_seq=last_read_seq
         )
         session.add(read_status)
@@ -966,14 +1176,14 @@ async def mark_messages_read(
 @app.get("/threads/{thread_id}/participants")
 async def get_thread_participants(
     thread_id: str,
-    user_id: str = Depends(get_user_id),
+    current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Get participants for a specific thread."""
+    """Get participants for a specific thread. Requires authentication."""
     # Verify user has access to thread
     participant = session.execute(
         select(ThreadParticipant)
-        .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == user_id)
+        .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == current_user.id)
     ).scalar_one_or_none()
     
     if not participant:
@@ -1066,7 +1276,7 @@ if __name__ == "__main__":
     if a.test:
         asyncio.run(_run_smoke_tests())
     else:
-        uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=False)
+        uvicorn.run("app:app", host="0.0.0.0", port=8002, reload=False)
 
 # Add static file serving
 from fastapi.staticfiles import StaticFiles
@@ -1089,8 +1299,11 @@ async def health_check():
 # ---------------------
 
 @app.get("/tags")
-async def list_tags(session=Depends(get_session)):
-    """Get all available tags."""
+async def list_tags(
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get all available tags. Requires authentication."""
     tags = session.execute(select(Tag).order_by(Tag.name)).scalars().all()
     return [
         {
@@ -1104,8 +1317,12 @@ async def list_tags(session=Depends(get_session)):
     ]
 
 @app.post("/tags")
-async def create_tag(tag_data: TagCreate, session=Depends(get_session)):
-    """Create a new tag."""
+async def create_tag(
+    tag_data: TagCreate, 
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Create a new tag. Requires authentication."""
     try:
         # Check if tag with same name already exists
         existing_tag = session.execute(
@@ -1139,8 +1356,12 @@ async def create_tag(tag_data: TagCreate, session=Depends(get_session)):
         raise HTTPException(status_code=500, detail=f"Failed to create tag: {str(e)}")
 
 @app.delete("/tags/{tag_id}")
-async def delete_tag(tag_id: str, session=Depends(get_session)):
-    """Delete a tag."""
+async def delete_tag(
+    tag_id: str, 
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Delete a tag. Requires authentication."""
     try:
         tag = session.execute(select(Tag).where(Tag.id == tag_id)).scalar_one_or_none()
         if not tag:
@@ -1160,15 +1381,19 @@ async def delete_tag(tag_id: str, session=Depends(get_session)):
 @app.post("/events/{event_id}/tags")
 async def add_tags_to_event(
     event_id: str, 
-    tag_data: EventTagCreate, 
+    tag_data: EventTagCreate,
+    current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Add tags to an event."""
+    """Add tags to an event. Requires authentication."""
     try:
-        # Verify event exists
+        # Verify event exists and user is the creator
         event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
         if not event:
             raise HTTPException(status_code=404, detail="Event not found")
+        
+        if event.created_by != current_user.id:
+            raise HTTPException(status_code=403, detail="Only event creator can manage tags")
         
         # Add each tag
         for tag_id in tag_data.tag_ids:
@@ -1219,11 +1444,20 @@ async def add_tags_to_event(
 @app.delete("/events/{event_id}/tags/{tag_id}")
 async def remove_tag_from_event(
     event_id: str, 
-    tag_id: str, 
+    tag_id: str,
+    current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Remove a tag from an event."""
+    """Remove a tag from an event. Requires authentication."""
     try:
+        # Verify event exists and user is the creator
+        event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        if event.created_by != current_user.id:
+            raise HTTPException(status_code=403, detail="Only event creator can manage tags")
+        
         # Find the relationship
         event_tag = session.execute(
             select(EventTag).where(
@@ -1246,3 +1480,36 @@ async def remove_tag_from_event(
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to remove tag: {str(e)}")
 
+# ---------------------
+# Smoke tests
+# ---------------------
+async def _run_smoke_tests():
+    from asgi_lifespan import LifespanManager
+    from httpx import AsyncClient
+
+    async with LifespanManager(app):
+        async with AsyncClient(app=app, base_url="http://testserver") as client:
+            # Test registration
+            r = await client.post("/auth/register", json={
+                "email": "test@example.com",
+                "password": "password123",
+                "display_name": "Test User"
+            })
+            r.raise_for_status()
+            data = r.json()
+            token = data["access_token"]
+            
+            # Test authenticated endpoint
+            r = await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+            r.raise_for_status()
+            print("✅ Smoke tests passed!")
+
+if __name__ == "__main__":
+    import argparse, uvicorn
+    p = argparse.ArgumentParser()
+    p.add_argument("--test", action="store_true")
+    a = p.parse_args()
+    if a.test:
+        asyncio.run(_run_smoke_tests())
+    else:
+        uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=False)
