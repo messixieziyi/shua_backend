@@ -513,7 +513,17 @@ async def lifespan(app: FastAPI):
 # FastAPI app
 # ---------------------
 app = FastAPI(title="Meetup Chat & Booking API", version="0.4.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
+# CORS configuration
+# Allow Vercel and localhost origins
+# Using regex pattern to match Vercel domains and localhost
+app.add_middleware(
+    CORSMiddleware,
+    allow_origin_regex=r"https?://(localhost:\d+|.*\.vercel\.app)",
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["*"],
+    allow_credentials=True,
+    expose_headers=["*"]
+)
 
 # ---------------------
 # Authentication Endpoints
@@ -810,17 +820,41 @@ async def list_events(
     current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """Get all events, optionally filtered by tag or activity type. Public endpoint - no authentication required."""
-    query = select(Event)
-    
-    if tag_filter:
-        # Filter events by tag name
-        query = query.join(EventTag).join(Tag).where(Tag.name.ilike(f"%{tag_filter}%"))
-    
-    if activity_filter:
-        # Filter events by activity type (sport name)
-        query = query.where(Event.activity_type.ilike(f"%{activity_filter}%"))
-    
-    events = session.execute(query).scalars().all()
+    try:
+        query = select(Event)
+        
+        if tag_filter:
+            # Filter events by tag name
+            query = query.join(EventTag).join(Tag).where(Tag.name.ilike(f"%{tag_filter}%"))
+        
+        if activity_filter:
+            # Filter events by activity type (sport name)
+            query = query.where(Event.activity_type.ilike(f"%{activity_filter}%"))
+        
+        events = session.execute(query).scalars().all()
+    except Exception as e:
+        # Check if it's a "table doesn't exist" error
+        error_msg = str(e).lower()
+        if 'does not exist' in error_msg or 'no such table' in error_msg or 'relation' in error_msg:
+            # Try to create tables
+            try:
+                print(f"⚠️  Tables missing, creating them now... Error: {e}")
+                Base.metadata.create_all(bind=engine)
+                # Return empty list after creating tables
+                return []
+            except Exception as create_error:
+                print(f"❌ Failed to create tables: {create_error}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Database tables not initialized. Error: {str(create_error)}"
+                )
+        else:
+            # Other database error
+            print(f"❌ Database error in /events: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database error: {str(e)}"
+            )
     
     result = []
     for event in events:
