@@ -40,7 +40,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, EmailStr
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, String, Text, UniqueConstraint, func, select, create_engine, text,
+    BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, String, Text, UniqueConstraint, func, select, create_engine, text, delete,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.exc import IntegrityError
@@ -129,6 +129,13 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
+    profile_picture: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    bio: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    gallery_image_1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    gallery_image_2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    gallery_image_3: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    gallery_image_4: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
 
 class Event(Base):
     __tablename__ = "events"
@@ -142,6 +149,10 @@ class Event(Base):
     address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+    image_1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    image_2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    image_3: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    auto_accept: Mapped[Optional[bool]] = mapped_column(Boolean, default=False, nullable=True)  # Free to join if True
 
 class Request(Base):
     __tablename__ = "requests"
@@ -169,10 +180,11 @@ class Thread(Base):
     __tablename__ = "threads"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     scope: Mapped[ThreadScope] = mapped_column(SQLEnum(ThreadScope), default=ThreadScope.REQUEST)
-    request_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requests.id", ondelete="CASCADE"))
-    booking_id: Mapped[Optional[str]] = mapped_column(ForeignKey("bookings.id", ondelete="CASCADE"))
-    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"))
+    request_id: Mapped[Optional[str]] = mapped_column(String(36))
+    booking_id: Mapped[Optional[str]] = mapped_column(String(36))
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id"), unique=True)  # One group chat per event
     is_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
 
 class ThreadParticipant(Base):
     __tablename__ = "thread_participants"
@@ -255,6 +267,40 @@ class TagOut(BaseModel):
 class EventTagCreate(BaseModel):
     tag_ids: list[str]
 
+# Image Upload Schemas
+class ImageUpload(BaseModel):
+    image_data: str  # Base64 encoded image
+    image_type: str  # MIME type like 'image/jpeg', 'image/png'
+
+class ProfilePictureUpdate(BaseModel):
+    profile_picture: Optional[str] = None  # Base64 encoded image
+
+class UserProfileUpdate(BaseModel):
+    display_name: Optional[str] = None
+    bio: Optional[str] = None
+    gallery_image_1: Optional[str] = None  # Base64 encoded image
+    gallery_image_2: Optional[str] = None  # Base64 encoded image
+    gallery_image_3: Optional[str] = None  # Base64 encoded image
+    gallery_image_4: Optional[str] = None  # Base64 encoded image
+
+class EventImagesUpdate(BaseModel):
+    image_1: Optional[str] = None  # Base64 encoded image
+    image_2: Optional[str] = None  # Base64 encoded image  
+    image_3: Optional[str] = None  # Base64 encoded image
+
+class EventUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    starts_at: Optional[str] = None  # ISO format datetime string
+    capacity: Optional[int] = None
+    activity_type: Optional[str] = None
+    location: Optional[str] = None
+    address: Optional[str] = None
+    image_1: Optional[str] = None  # Base64 encoded image
+    image_2: Optional[str] = None  # Base64 encoded image
+    image_3: Optional[str] = None  # Base64 encoded image
+    tag_ids: Optional[list[str]] = None  # List of tag IDs
+
 # ---------------------
 # Authentication Schemas
 # ---------------------
@@ -278,6 +324,13 @@ class UserOut(BaseModel):
     id: str
     email: str
     display_name: str
+    profile_picture: Optional[str] = None
+    bio: Optional[str] = None
+    gallery_image_1: Optional[str] = None
+    gallery_image_2: Optional[str] = None
+    gallery_image_3: Optional[str] = None
+    gallery_image_4: Optional[str] = None
+    created_at: Optional[str] = None
 
 # ---------------------
 # Authentication Utilities
@@ -308,6 +361,47 @@ def decode_access_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+# ---------------------
+# Image Upload Utilities
+# ---------------------
+import base64
+import re
+
+def validate_base64_image(image_data: str, max_size_mb: int = 5) -> tuple[bool, str]:
+    """Validate base64 encoded image data or image URL."""
+    try:
+        # Allow HTTP/HTTPS URLs (for existing images from Unsplash, etc.)
+        if image_data.startswith('http://') or image_data.startswith('https://'):
+            return True, "Valid image URL"
+        
+        # Check if it's a valid base64 data URL
+        if not image_data.startswith('data:image/'):
+            return False, "Invalid image format. Must be a data URL or valid image URL."
+        
+        # Extract the base64 part
+        header, data = image_data.split(',', 1)
+        
+        # Validate MIME type
+        mime_match = re.match(r'data:image/(jpeg|jpg|png|gif|webp)', header)
+        if not mime_match:
+            return False, "Unsupported image type. Only JPEG, PNG, GIF, and WebP are allowed."
+        
+        # Decode and check size
+        try:
+            decoded = base64.b64decode(data)
+            size_mb = len(decoded) / (1024 * 1024)
+            
+            if size_mb > max_size_mb:
+                return False, f"Image too large. Maximum size is {max_size_mb}MB."
+                
+            return True, "Valid image"
+            
+        except Exception:
+            return False, "Invalid base64 encoding."
+            
+    except Exception as e:
+        return False, f"Image validation error: {str(e)}"
 
 # ---------------------
 # Dependencies
@@ -364,8 +458,24 @@ def get_user_id(x_user_id: str = Header(None)):
 def _next_seq(session, thread_id: str) -> int:
     return session.execute(select(func.coalesce(func.max(Message.seq), 0) + 1).where(Message.thread_id == thread_id)).scalar_one()
 
-def serialize_message(m: Message) -> dict:
-    return {"id": m.id, "thread_id": m.thread_id, "sender_id": m.sender_id, "kind": m.kind.value, "body": m.body, "created_at": m.created_at.isoformat(), "seq": m.seq}
+def serialize_message(m: Message, session=None) -> dict:
+    sender_name = None
+    if m.sender_id and session:
+        # Get sender's display name
+        user = session.execute(select(User).where(User.id == m.sender_id)).scalar_one_or_none()
+        if user:
+            sender_name = user.display_name
+    
+    return {
+        "id": m.id, 
+        "thread_id": m.thread_id, 
+        "sender_id": m.sender_id, 
+        "sender_name": sender_name,
+        "kind": m.kind.value, 
+        "body": m.body, 
+        "created_at": m.created_at.isoformat(), 
+        "seq": m.seq
+    }
 
 async def system_message(session, thread_id: str, body: str):
     m = Message(thread_id=thread_id, sender_id=None, client_msg_id=str(uuid.uuid4()), kind=MessageKind.SYSTEM, body=body, seq=_next_seq(session, thread_id))
@@ -501,7 +611,14 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
     return UserOut(
         id=current_user.id,
         email=current_user.email,
-        display_name=current_user.display_name
+        display_name=current_user.display_name,
+        profile_picture=current_user.profile_picture,
+        bio=current_user.bio,
+        gallery_image_1=current_user.gallery_image_1,
+        gallery_image_2=current_user.gallery_image_2,
+        gallery_image_3=current_user.gallery_image_3,
+        gallery_image_4=current_user.gallery_image_4,
+        created_at=current_user.created_at.isoformat() if current_user.created_at else None
     )
 
 # ---------------------
@@ -510,23 +627,206 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
 @app.get("/users")
 async def get_current_user_info(current_user: User = Depends(get_current_user), session=Depends(get_session)):
     """Get current user information. Requires authentication."""
-    return {"id": current_user.id, "display_name": current_user.display_name, "email": current_user.email}
+    return {
+        "id": current_user.id, 
+        "display_name": current_user.display_name, 
+        "email": current_user.email,
+        "profile_picture": current_user.profile_picture,
+        "bio": current_user.bio,
+        "gallery_image_1": current_user.gallery_image_1,
+        "gallery_image_2": current_user.gallery_image_2,
+        "gallery_image_3": current_user.gallery_image_3,
+        "gallery_image_4": current_user.gallery_image_4,
+        "created_at": current_user.created_at.isoformat() if current_user.created_at else None
+    }
+
+# ---------------------
+# Image Upload Endpoints
+# ---------------------
+@app.post("/users/profile-picture")
+async def update_profile_picture(
+    profile_data: ProfilePictureUpdate,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Update user's profile picture. Requires authentication."""
+    try:
+        if profile_data.profile_picture:
+            # Validate the image
+            is_valid, message = validate_base64_image(profile_data.profile_picture, max_size_mb=2)
+            if not is_valid:
+                raise HTTPException(status_code=400, detail=message)
+        
+        # Update user's profile picture
+        current_user.profile_picture = profile_data.profile_picture
+        session.commit()
+        
+        return {
+            "message": "Profile picture updated successfully",
+            "profile_picture": current_user.profile_picture
+        }
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update profile picture: {str(e)}")
+
+@app.put("/users/profile")
+async def update_user_profile(
+    profile_data: UserProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Update user's profile (name, bio, gallery images). Requires authentication."""
+    try:
+        # Update display name if provided
+        if profile_data.display_name is not None:
+            current_user.display_name = profile_data.display_name
+        
+        # Update bio if provided
+        if profile_data.bio is not None:
+            current_user.bio = profile_data.bio
+        
+        # Validate and update gallery images if provided
+        for field_name, image_data in [
+            ("gallery_image_1", profile_data.gallery_image_1),
+            ("gallery_image_2", profile_data.gallery_image_2),
+            ("gallery_image_3", profile_data.gallery_image_3),
+            ("gallery_image_4", profile_data.gallery_image_4)
+        ]:
+            if image_data is not None:
+                if image_data:  # Not empty string
+                    is_valid, message = validate_base64_image(image_data, max_size_mb=5)
+                    if not is_valid:
+                        raise HTTPException(status_code=400, detail=f"{field_name}: {message}")
+                setattr(current_user, field_name, image_data)
+        
+        session.commit()
+        
+        return {
+            "message": "Profile updated successfully",
+            "user": {
+                "id": current_user.id,
+                "display_name": current_user.display_name,
+                "bio": current_user.bio,
+                "gallery_image_1": current_user.gallery_image_1,
+                "gallery_image_2": current_user.gallery_image_2,
+                "gallery_image_3": current_user.gallery_image_3,
+                "gallery_image_4": current_user.gallery_image_4
+            }
+        }
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update profile: {str(e)}")
+
+@app.post("/events/{event_id}/images")
+async def update_event_images(
+    event_id: str,
+    images_data: EventImagesUpdate,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Update event images (max 3). Requires authentication and event ownership."""
+    try:
+        # Get the event and verify ownership
+        event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        if event.created_by != current_user.id:
+            raise HTTPException(status_code=403, detail="Only event creator can update images")
+        
+        # Validate images if provided
+        for field_name, image_data in [
+            ("image_1", images_data.image_1),
+            ("image_2", images_data.image_2), 
+            ("image_3", images_data.image_3)
+        ]:
+            if image_data:
+                is_valid, message = validate_base64_image(image_data, max_size_mb=3)
+                if not is_valid:
+                    raise HTTPException(status_code=400, detail=f"{field_name}: {message}")
+        
+        # Update event images
+        if images_data.image_1 is not None:
+            event.image_1 = images_data.image_1
+        if images_data.image_2 is not None:
+            event.image_2 = images_data.image_2
+        if images_data.image_3 is not None:
+            event.image_3 = images_data.image_3
+            
+        session.commit()
+        
+        return {
+            "message": "Event images updated successfully",
+            "event_id": event_id,
+            "images": {
+                "image_1": event.image_1,
+                "image_2": event.image_2,
+                "image_3": event.image_3
+            }
+        }
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update event images: {str(e)}")
 
 # POST /users endpoint removed - users should be created through /auth/register
 
+def get_current_user_optional(
+    authorization: str = Header(None, alias="Authorization"),
+    session = Depends(get_session)
+) -> Optional[User]:
+    """Get the current user if authenticated, otherwise return None."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    
+    try:
+        token = authorization.split(" ")[1]
+        payload = decode_access_token(token)
+        if payload is None:
+            return None
+        
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            return None
+        
+        user = session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+        return user
+    except Exception:
+        return None
+
 @app.get("/events")
-async def list_events(session=Depends(get_session), tag_filter: Optional[str] = None):
-    """Get all events, optionally filtered by tag. Public endpoint - no authentication required."""
+async def list_events(
+    session=Depends(get_session), 
+    tag_filter: Optional[str] = None,
+    activity_filter: Optional[str] = None,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """Get all events, optionally filtered by tag or activity type. Public endpoint - no authentication required."""
     query = select(Event)
     
     if tag_filter:
         # Filter events by tag name
         query = query.join(EventTag).join(Tag).where(Tag.name.ilike(f"%{tag_filter}%"))
     
+    if activity_filter:
+        # Filter events by activity type (sport name)
+        query = query.where(Event.activity_type.ilike(f"%{activity_filter}%"))
+    
     events = session.execute(query).scalars().all()
     
     result = []
     for event in events:
+        # Get host/creator information
+        creator = session.execute(select(User).where(User.id == event.created_by)).scalar_one_or_none()
+        
         # Get tags for this event
         event_tags = session.execute(
             select(Tag).join(EventTag).where(EventTag.event_id == event.id)
@@ -538,10 +838,22 @@ async def list_events(session=Depends(get_session), tag_filter: Optional[str] = 
             "description": event.description,
             "capacity": event.capacity,
             "starts_at": event.starts_at.isoformat(),
+            "time": event.starts_at.isoformat(),  # For backward compatibility
             "activity_type": event.activity_type,
+            "sport_type": event.activity_type,  # For backward compatibility
             "location": event.location,
             "address": event.address,
             "created_by": event.created_by,
+            "host_name": creator.display_name if creator else "Unknown Host",
+            "available_spots": event.capacity,
+            "occupied_spots": 0,  # TODO: Calculate from bookings
+            "level_needed": "All Levels",  # TODO: Add to Event model if needed
+            "auto_accept": event.auto_accept if event.auto_accept is not None else False,
+            "images": {
+                "image_1": event.image_1,
+                "image_2": event.image_2,
+                "image_3": event.image_3
+            },
             "tags": [
                 {
                     "id": tag.id,
@@ -554,6 +866,122 @@ async def list_events(session=Depends(get_session), tag_filter: Optional[str] = 
         })
     
     return result
+
+@app.get("/events/my")
+async def get_my_events(
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get all events created by the current user. Requires authentication."""
+    try:
+        # Get events created by the current user
+        user_events = session.execute(
+            select(Event)
+            .where(Event.created_by == current_user.id)
+            .order_by(Event.starts_at.asc())
+        ).scalars().all()
+        
+        result = []
+        for event in user_events:
+            # Get tags for this event
+            event_tags = session.execute(
+                select(Tag).join(EventTag).where(EventTag.event_id == event.id)
+            ).scalars().all()
+            
+            result.append({
+                "id": event.id,
+                "title": event.title,
+                "description": event.description,
+                "capacity": event.capacity,
+                "starts_at": event.starts_at.isoformat(),
+                "time": event.starts_at.isoformat(),  # For backward compatibility
+                "activity_type": event.activity_type,
+                "sport_type": event.activity_type,  # For backward compatibility
+                "location": event.location,
+                "address": event.address,
+                "created_by": event.created_by,
+                "host_name": current_user.display_name,  # Current user is the host
+                "available_spots": event.capacity,
+                "occupied_spots": 0,  # TODO: Calculate from bookings
+                "level_needed": "All Levels",  # TODO: Add to Event model if needed
+                "auto_accept": event.auto_accept if event.auto_accept is not None else False,
+                "images": {
+                    "image_1": event.image_1,
+                    "image_2": event.image_2,
+                    "image_3": event.image_3
+                },
+                "tags": [
+                    {
+                        "id": tag.id,
+                        "name": tag.name,
+                        "color": tag.color,
+                        "description": tag.description
+                    }
+                    for tag in event_tags
+                ]
+            })
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get user events: {str(e)}")
+
+@app.get("/events/{event_id}")
+async def get_event_by_id(
+    event_id: str, 
+    current_user: Optional[User] = Depends(get_current_user_optional),
+    session=Depends(get_session)
+):
+    """Get a specific event by ID. Public endpoint - authentication optional."""
+    try:
+        event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+        
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        # Get host/creator information
+        creator = session.execute(select(User).where(User.id == event.created_by)).scalar_one_or_none()
+        
+        # Get tags for this event
+        event_tags = session.execute(
+            select(Tag).join(EventTag).where(EventTag.event_id == event.id)
+        ).scalars().all()
+        
+        return {
+            "id": event.id,
+            "title": event.title,
+            "description": event.description,
+            "capacity": event.capacity,
+            "starts_at": event.starts_at.isoformat(),
+            "time": event.starts_at.isoformat(),  # For backward compatibility
+            "activity_type": event.activity_type,
+            "sport_type": event.activity_type,  # For backward compatibility
+            "location": event.location,
+            "address": event.address,
+            "created_by": event.created_by,
+            "host_name": creator.display_name if creator else "Unknown Host",
+            "available_spots": event.capacity,
+            "occupied_spots": 0,  # TODO: Calculate from bookings
+            "level_needed": "All Levels",  # TODO: Add to Event model if needed
+            "auto_accept": event.auto_accept if event.auto_accept is not None else False,
+            "images": {
+                "image_1": event.image_1,
+                "image_2": event.image_2,
+                "image_3": event.image_3
+            },
+            "tags": [
+                {
+                    "id": tag.id,
+                    "name": tag.name,
+                    "color": tag.color,
+                    "description": tag.description
+                }
+                for tag in event_tags
+            ]
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get event: {str(e)}")
 
 @app.post("/events")
 async def create_event(
@@ -627,6 +1055,11 @@ async def create_event(
             "location": new_event.location,
             "address": new_event.address,
             "created_by": new_event.created_by,
+            "images": {
+                "image_1": new_event.image_1,
+                "image_2": new_event.image_2,
+                "image_3": new_event.image_3
+            },
             "tags": [
                 {
                     "id": tag.id,
@@ -640,6 +1073,117 @@ async def create_event(
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to create event: {str(e)}")
+
+@app.put("/events/{event_id}")
+async def update_event(
+    event_id: str,
+    event_data: EventUpdate,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Update an event. Only the creator can update. Requires authentication."""
+    try:
+        # Get the event
+        event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        # Check if current user is the creator
+        if event.created_by != current_user.id:
+            raise HTTPException(status_code=403, detail="Only the event creator can update this event")
+        
+        # Update basic fields if provided
+        if event_data.title is not None:
+            event.title = event_data.title
+        if event_data.description is not None:
+            event.description = event_data.description
+        if event_data.capacity is not None:
+            event.capacity = event_data.capacity
+        if event_data.activity_type is not None:
+            event.activity_type = event_data.activity_type
+        if event_data.location is not None:
+            event.location = event_data.location
+        if event_data.address is not None:
+            event.address = event_data.address
+        
+        # Update datetime if provided
+        if event_data.starts_at is not None:
+            try:
+                starts_at = dt.datetime.fromisoformat(event_data.starts_at.replace('Z', '+00:00'))
+                event.starts_at = starts_at
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid starts_at format")
+        
+        # Validate and update images if provided
+        for field_name, image_data in [
+            ("image_1", event_data.image_1),
+            ("image_2", event_data.image_2),
+            ("image_3", event_data.image_3)
+        ]:
+            if image_data is not None:
+                if image_data:  # Not empty string
+                    is_valid, message = validate_base64_image(image_data, max_size_mb=5)
+                    if not is_valid:
+                        raise HTTPException(status_code=400, detail=f"{field_name}: {message}")
+                setattr(event, field_name, image_data)
+        
+        # Update tags if provided
+        if event_data.tag_ids is not None:
+            # Remove existing tags
+            session.execute(
+                delete(EventTag).where(EventTag.event_id == event_id)
+            )
+            
+            # Add new tags
+            for tag_id in event_data.tag_ids:
+                # Verify tag exists
+                tag = session.execute(select(Tag).where(Tag.id == tag_id)).scalar_one_or_none()
+                if tag:
+                    event_tag = EventTag(event_id=event_id, tag_id=tag_id)
+                    session.add(event_tag)
+        
+        session.commit()
+        session.refresh(event)
+        
+        # Get tags for response
+        event_tags = session.execute(
+            select(Tag).join(EventTag).where(EventTag.event_id == event.id)
+        ).scalars().all()
+        
+        return {
+            "message": "Event updated successfully",
+            "event": {
+                "id": event.id,
+                "title": event.title,
+                "description": event.description,
+                "capacity": event.capacity,
+                "starts_at": event.starts_at.isoformat(),
+                "activity_type": event.activity_type,
+                "location": event.location,
+                "address": event.address,
+                "created_by": event.created_by,
+                "images": {
+                    "image_1": event.image_1,
+                    "image_2": event.image_2,
+                    "image_3": event.image_3
+                },
+                "tags": [
+                    {
+                        "id": tag.id,
+                        "name": tag.name,
+                        "color": tag.color,
+                        "description": tag.description
+                    }
+                    for tag in event_tags
+                ]
+            }
+        }
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update event: {str(e)}")
 
 @app.post("/rsvps")
 async def create_rsvp(
@@ -751,31 +1295,61 @@ async def create_request(
         if existing_request:
             raise HTTPException(400, "You already have a request for this event")
         
+        # Determine auto-accept strictly on the server side
+        should_auto_accept = bool(payload.auto_accept) or bool(getattr(event, "auto_accept", False))
+        
         # Create the request - use event creator as host
-        req = Request(event_id=payload.event_id, guest_id=current_user.id, host_id=event.created_by, auto_accept=payload.auto_accept)
+        req = Request(event_id=payload.event_id, guest_id=current_user.id, host_id=event.created_by, auto_accept=should_auto_accept)
         session.add(req)
         session.flush()
 
-        thread = Thread(scope=ThreadScope.REQUEST, request_id=req.id, event_id=payload.event_id)
-        session.add(thread)
-        session.flush()
+        # Note: Thread will be created when first request is accepted, not when request is made
+        # This ensures the group chat only exists when there are actual participants
 
-        session.add_all([ThreadParticipant(thread_id=thread.id, user_id=req.guest_id, role="guest"), ThreadParticipant(thread_id=thread.id, user_id=req.host_id, role="host")])
-        session.flush()
-
-        # auto-accept: immediately create booking
+        # auto-accept: immediately create booking and add to group chat
         if req.auto_accept:
             req.status = RequestStatus.ACCEPTED
             booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
             session.add(booking)
             session.flush()
-            thread.scope = ThreadScope.BOOKING
-            thread.booking_id = booking.id
+            
+            # Find or create the event group chat
+            thread = session.execute(
+                select(Thread).where(Thread.event_id == payload.event_id)
+            ).scalar_one_or_none()
+            
+            if not thread:
+                # Create new group chat for this event
+                thread = Thread(scope=ThreadScope.BOOKING, event_id=payload.event_id)
+                session.add(thread)
+                session.flush()
+                
+                # Add the host as the first participant
+                host_participant = ThreadParticipant(thread_id=thread.id, user_id=event.created_by, role="host")
+                session.add(host_participant)
+                
+                await system_message(session, thread.id, f"Welcome to the {event.title} event chat!")
+            
+            # Add the requesting user to the group chat
+            existing_participant = session.execute(
+                select(ThreadParticipant).where(
+                    ThreadParticipant.thread_id == thread.id,
+                    ThreadParticipant.user_id == current_user.id
+                )
+            ).scalar_one_or_none()
+            
+            if not existing_participant:
+                guest_participant = ThreadParticipant(thread_id=thread.id, user_id=current_user.id, role="guest")
+                session.add(guest_participant)
+                
+                guest_name = current_user.display_name
+                await system_message(session, thread.id, f"{guest_name} has joined the event!")
+            
             session.flush()
-            await system_message(session, thread.id, "Request auto-accepted, booking confirmed.")
 
         session.commit()
-        return {"request_id": req.id, "thread_id": thread.id, "status": req.status}
+        thread_id = thread.id if req.auto_accept else None
+        return {"request_id": req.id, "thread_id": thread_id, "status": req.status}
     
     except HTTPException:
         session.rollback()
@@ -799,10 +1373,6 @@ async def act_on_request(
         if current_user.id != req.host_id:
             raise HTTPException(403, "Only the host can approve or decline requests")
 
-        thread = session.execute(select(Thread).where(Thread.request_id == req.id)).scalar_one_or_none()
-        if not thread:
-            raise HTTPException(404, "Thread not found for this request")
-
         if payload.action == "accept":
             # Check if request is already processed
             if req.status != RequestStatus.SUBMITTED:
@@ -812,10 +1382,46 @@ async def act_on_request(
             booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
             session.add(booking)
             session.flush()
-            thread.scope = ThreadScope.BOOKING
-            thread.booking_id = booking.id
+            
+            # Find or create the event group chat
+            thread = session.execute(
+                select(Thread).where(Thread.event_id == req.event_id)
+            ).scalar_one_or_none()
+            
+            # Get event details for better messages
+            event = session.execute(select(Event).where(Event.id == req.event_id)).scalar_one_or_none()
+            event_title = event.title if event else "this event"
+            
+            if not thread:
+                # Create new group chat for this event (first accepted participant)
+                thread = Thread(scope=ThreadScope.BOOKING, event_id=req.event_id)
+                session.add(thread)
+                session.flush()
+                
+                # Add the host as the first participant
+                host_participant = ThreadParticipant(thread_id=thread.id, user_id=req.host_id, role="host")
+                session.add(host_participant)
+                
+                await system_message(session, thread.id, f"Welcome to the {event_title} event chat!")
+            
+            # Add the accepted user to the group chat
+            existing_participant = session.execute(
+                select(ThreadParticipant).where(
+                    ThreadParticipant.thread_id == thread.id,
+                    ThreadParticipant.user_id == req.guest_id
+                )
+            ).scalar_one_or_none()
+            
+            if not existing_participant:
+                guest_participant = ThreadParticipant(thread_id=thread.id, user_id=req.guest_id, role="guest")
+                session.add(guest_participant)
+                
+                # Get guest name for system message
+                guest = session.execute(select(User).where(User.id == req.guest_id)).scalar_one_or_none()
+                guest_name = guest.display_name if guest else "A participant"
+                await system_message(session, thread.id, f"{guest_name} has joined the event!")
+            
             session.flush()
-            await system_message(session, thread.id, "Request accepted, booking confirmed.")
             session.commit()
             return {"status": req.status, "booking_id": booking.id, "thread_id": thread.id}
 
@@ -956,17 +1562,37 @@ async def _run_smoke_tests():
 # ---------------------
 # Additional Schemas
 # ---------------------
+class EventSummaryOut(BaseModel):
+    id: str
+    title: str
+    description: Optional[str]
+    starts_at: str
+    location: Optional[str]
+    activity_type: Optional[str]
+
+class LastMessageOut(BaseModel):
+    id: str
+    sender_id: Optional[str]
+    sender_name: Optional[str]
+    body: str
+    created_at: str
+    kind: MessageKind
+
 class ThreadOut(BaseModel):
     id: str
     scope: ThreadScope
-    request_id: Optional[str]
-    booking_id: Optional[str]
     event_id: str
     is_locked: bool
+    created_at: str
+    event: Optional[EventSummaryOut] = None
+    last_message: Optional[LastMessageOut] = None
+    unread_count: int = 0
+    participant_count: int = 0
 
 class ThreadParticipantOut(BaseModel):
     thread_id: str
     user_id: str
+    user_name: str
     role: str
 
 class MessageReadOut(BaseModel):
@@ -986,7 +1612,7 @@ async def get_user_threads(
     current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Get all threads where the user is a participant. Requires authentication."""
+    """Get all threads where the user is a participant with event details and last messages. Requires authentication."""
     # Get thread IDs where user is a participant
     participant_threads = session.execute(
         select(ThreadParticipant.thread_id)
@@ -996,30 +1622,110 @@ async def get_user_threads(
     if not participant_threads:
         return ThreadListOut(threads=[], participants={})
     
-    # Get thread details
+    # Get thread details with events
     threads = session.execute(
         select(Thread)
         .where(Thread.id.in_(participant_threads))
         .order_by(Thread.id)
     ).scalars().all()
     
-    # Get participants for each thread
+    # Build enhanced thread list
+    enhanced_threads = []
     participants = {}
+    
     for thread in threads:
+        # Get event details
+        event = session.execute(
+            select(Event).where(Event.id == thread.event_id)
+        ).scalar_one_or_none()
+        
+        event_summary = None
+        if event:
+            event_summary = EventSummaryOut(
+                id=event.id,
+                title=event.title,
+                description=event.description,
+                starts_at=event.starts_at.isoformat(),
+                location=event.location,
+                activity_type=event.activity_type
+            )
+        
+        # Get last message
+        last_message_record = session.execute(
+            select(Message)
+            .where(Message.thread_id == thread.id)
+            .order_by(Message.seq.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        
+        last_message = None
+        if last_message_record:
+            # Get sender name
+            sender_name = None
+            if last_message_record.sender_id:
+                sender = session.execute(
+                    select(User).where(User.id == last_message_record.sender_id)
+                ).scalar_one_or_none()
+                sender_name = sender.display_name if sender else "Unknown User"
+            
+            last_message = LastMessageOut(
+                id=last_message_record.id,
+                sender_id=last_message_record.sender_id,
+                sender_name=sender_name,
+                body=last_message_record.body,
+                created_at=last_message_record.created_at.isoformat(),
+                kind=last_message_record.kind
+            )
+        
+        # Get unread count
+        user_read_status = session.execute(
+            select(MessageRead)
+            .where(MessageRead.thread_id == thread.id, MessageRead.user_id == current_user.id)
+        ).scalar_one_or_none()
+        
+        last_read_seq = user_read_status.last_read_seq if user_read_status else 0
+        unread_count = session.execute(
+            select(func.count(Message.id))
+            .where(Message.thread_id == thread.id, Message.seq > last_read_seq)
+        ).scalar_one()
+        
+        # Get participants for this thread
         thread_participants = session.execute(
-            select(ThreadParticipant)
+            select(ThreadParticipant, User)
+            .join(User, ThreadParticipant.user_id == User.id)
             .where(ThreadParticipant.thread_id == thread.id)
-        ).scalars().all()
+        ).all()
+        
         participants[thread.id] = [
-            ThreadParticipantOut(thread_id=p.thread_id, user_id=p.user_id, role=p.role)
+            ThreadParticipantOut(
+                thread_id=p.ThreadParticipant.thread_id, 
+                user_id=p.ThreadParticipant.user_id, 
+                user_name=p.User.display_name,
+                role=p.ThreadParticipant.role
+            )
             for p in thread_participants
         ]
+        
+        enhanced_threads.append(ThreadOut(
+            id=thread.id,
+            scope=thread.scope,
+            event_id=thread.event_id,
+            is_locked=thread.is_locked,
+            created_at=thread.created_at.isoformat(),
+            event=event_summary,
+            last_message=last_message,
+            unread_count=unread_count,
+            participant_count=len(thread_participants)
+        ))
+    
+    # Sort threads by last message time (most recent first)
+    enhanced_threads.sort(
+        key=lambda t: t.last_message.created_at if t.last_message else "1970-01-01T00:00:00",
+        reverse=True
+    )
     
     return ThreadListOut(
-        threads=[ThreadOut(
-            id=t.id, scope=t.scope, request_id=t.request_id, 
-            booking_id=t.booking_id, event_id=t.event_id, is_locked=t.is_locked
-        ) for t in threads],
+        threads=enhanced_threads,
         participants=participants
     )
 
@@ -1050,7 +1756,7 @@ async def get_thread_messages(
         .offset(offset)
     ).scalars().all()
     
-    return [serialize_message(m) for m in reversed(messages)]
+    return [serialize_message(m, session) for m in reversed(messages)]
 
 @app.post("/threads/{thread_id}/messages")
 async def send_message(
@@ -1080,7 +1786,7 @@ async def send_message(
             raise HTTPException(400, "Thread is locked")
         
         # Additional access control: Check if user is host or accepted participant
-        if thread.scope == ThreadScope.REQUEST:
+        if thread.scope == ThreadScope.REQUEST and thread.request_id:
             # For request threads, check if user is the host or has an accepted request
             request = session.execute(
                 select(Request).where(Request.id == thread.request_id)
@@ -1093,7 +1799,7 @@ async def send_message(
             if current_user.id != request.host_id and request.status != RequestStatus.ACCEPTED:
                 raise HTTPException(403, "Only the host or accepted participants can send messages")
         
-        elif thread.scope == ThreadScope.BOOKING:
+        elif thread.scope == ThreadScope.BOOKING and thread.request_id:
             # For booking threads, check if user is the host or has an accepted request
             request = session.execute(
                 select(Request).where(Request.id == thread.request_id)
@@ -1122,10 +1828,10 @@ async def send_message(
         # Broadcast via WebSocket
         await manager.broadcast_to_thread({
             "type": "new_message",
-            "message": serialize_message(message)
+            "message": serialize_message(message, session)
         }, thread_id, exclude_user=message.sender_id)
         
-        return serialize_message(message)
+        return serialize_message(message, session)
     
     except HTTPException:
         session.rollback()
@@ -1137,10 +1843,13 @@ async def send_message(
         session.rollback()
         raise HTTPException(500, f"Failed to send message: {str(e)}")
 
+class MarkReadRequest(BaseModel):
+    last_read_seq: int
+
 @app.post("/threads/{thread_id}/read")
 async def mark_messages_read(
     thread_id: str,
-    last_read_seq: int,
+    request: MarkReadRequest,
     current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
@@ -1161,12 +1870,12 @@ async def mark_messages_read(
     ).scalar_one_or_none()
     
     if read_status:
-        read_status.last_read_seq = last_read_seq
+        read_status.last_read_seq = request.last_read_seq
     else:
         read_status = MessageRead(
             thread_id=thread_id,
             user_id=current_user.id,
-            last_read_seq=last_read_seq
+            last_read_seq=request.last_read_seq
         )
         session.add(read_status)
     
@@ -1189,16 +1898,130 @@ async def get_thread_participants(
     if not participant:
         raise HTTPException(403, "Access denied")
     
-    # Get all participants
+    # Get all participants with user details
     participants = session.execute(
-        select(ThreadParticipant)
+        select(ThreadParticipant, User)
+        .join(User, ThreadParticipant.user_id == User.id)
         .where(ThreadParticipant.thread_id == thread_id)
-    ).scalars().all()
+    ).all()
     
     return [
-        ThreadParticipantOut(thread_id=p.thread_id, user_id=p.user_id, role=p.role)
+        ThreadParticipantOut(
+            thread_id=p.ThreadParticipant.thread_id, 
+            user_id=p.ThreadParticipant.user_id, 
+            user_name=p.User.display_name,
+            role=p.ThreadParticipant.role
+        )
         for p in participants
     ]
+
+@app.get("/threads/{thread_id}/details")
+async def get_thread_details(
+    thread_id: str,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get detailed information about a thread including event details. Requires authentication."""
+    # Verify user has access to thread
+    participant = session.execute(
+        select(ThreadParticipant)
+        .where(ThreadParticipant.thread_id == thread_id, ThreadParticipant.user_id == current_user.id)
+    ).scalar_one_or_none()
+    
+    if not participant:
+        raise HTTPException(403, "Access denied")
+    
+    # Get thread details
+    thread = session.execute(
+        select(Thread).where(Thread.id == thread_id)
+    ).scalar_one_or_none()
+    
+    if not thread:
+        raise HTTPException(404, "Thread not found")
+    
+    # Get event details
+    event = session.execute(
+        select(Event).where(Event.id == thread.event_id)
+    ).scalar_one_or_none()
+    
+    event_summary = None
+    if event:
+        # Get event creator details
+        creator = session.execute(
+            select(User).where(User.id == event.created_by)
+        ).scalar_one_or_none()
+        
+        # Get event tags
+        event_tags = session.execute(
+            select(Tag).join(EventTag).where(EventTag.event_id == event.id)
+        ).scalars().all()
+        
+        event_summary = {
+            "id": event.id,
+            "title": event.title,
+            "description": event.description,
+            "starts_at": event.starts_at.isoformat(),
+            "location": event.location,
+            "address": event.address,
+            "activity_type": event.activity_type,
+            "capacity": event.capacity,
+            "created_by": event.created_by,
+            "creator_name": creator.display_name if creator else "Unknown",
+            "tags": [
+                {
+                    "id": tag.id,
+                    "name": tag.name,
+                    "color": tag.color,
+                    "description": tag.description
+                }
+                for tag in event_tags
+            ]
+        }
+    
+    
+    # Get all requests for this event to show request/booking details
+    event_requests = session.execute(
+        select(Request).where(Request.event_id == thread.event_id)
+    ).scalars().all()
+    
+    requests_details = []
+    for req in event_requests:
+        guest = session.execute(select(User).where(User.id == req.guest_id)).scalar_one_or_none()
+        host = session.execute(select(User).where(User.id == req.host_id)).scalar_one_or_none()
+        
+        booking_info = None
+        if req.status == RequestStatus.ACCEPTED:
+            booking = session.execute(
+                select(Booking).where(Booking.request_id == req.id)
+            ).scalar_one_or_none()
+            if booking:
+                booking_info = {
+                    "id": booking.id,
+                    "status": booking.status
+                }
+        
+        requests_details.append({
+            "id": req.id,
+            "status": req.status,
+            "guest_id": req.guest_id,
+            "guest_name": guest.display_name if guest else "Unknown",
+            "host_id": req.host_id,
+            "host_name": host.display_name if host else "Unknown",
+            "created_at": req.created_at.isoformat(),
+            "booking": booking_info
+        })
+    
+    return {
+        "thread": {
+            "id": thread.id,
+            "scope": thread.scope,
+            "is_locked": thread.is_locked,
+            "event_id": thread.event_id,
+            "created_at": thread.created_at.isoformat()
+        },
+        "event": event_summary,
+        "requests": requests_details
+    }
 
 # ---------------------
 # WebSocket Manager
@@ -1268,15 +2091,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     except WebSocketDisconnect:
         manager.disconnect(user_id)
 
-if __name__ == "__main__":
-    import argparse, uvicorn
-    p = argparse.ArgumentParser()
-    p.add_argument("--test", action="store_true")
-    a = p.parse_args()
-    if a.test:
-        asyncio.run(_run_smoke_tests())
-    else:
-        uvicorn.run("app:app", host="0.0.0.0", port=8002, reload=False)
+# Old duplicate code removed - using main block at end of file
 
 # Add static file serving
 from fastapi.staticfiles import StaticFiles
