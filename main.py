@@ -105,6 +105,10 @@ class RequestStatus(str, Enum):
     EXPIRED = "EXPIRED"
     CANCELED = "CANCELED"
 
+class EventStatus(str, Enum):
+    ACTIVE = "ACTIVE"
+    CANCELED = "CANCELED"
+
 class BookingStatus(str, Enum):
     CONFIRMED = "CONFIRMED"
     CANCELED_BY_HOST = "CANCELED_BY_HOST"
@@ -153,6 +157,8 @@ class Event(Base):
     image_2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
     image_3: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
     auto_accept: Mapped[Optional[bool]] = mapped_column(Boolean, default=False, nullable=True)  # Free to join if True
+    status: Mapped[EventStatus] = mapped_column(SQLEnum(EventStatus), default=EventStatus.ACTIVE)
+    cancellation_deadline_hours: Mapped[int] = mapped_column(BigInteger, default=24)
 
 class Request(Base):
     __tablename__ = "requests"
@@ -300,6 +306,7 @@ class EventUpdate(BaseModel):
     image_2: Optional[str] = None  # Base64 encoded image
     image_3: Optional[str] = None  # Base64 encoded image
     tag_ids: Optional[list[str]] = None  # List of tag IDs
+    cancellation_deadline_hours: Optional[int] = None
 
 # ---------------------
 # Authentication Schemas
@@ -478,9 +485,24 @@ def serialize_message(m: Message, session=None) -> dict:
     }
 
 async def system_message(session, thread_id: str, body: str):
-    m = Message(thread_id=thread_id, sender_id=None, client_msg_id=str(uuid.uuid4()), kind=MessageKind.SYSTEM, body=body, seq=_next_seq(session, thread_id))
-    session.add(m)
-    session.flush()
+    try:
+        m = Message(thread_id=thread_id, sender_id=None, client_msg_id=str(uuid.uuid4()), kind=MessageKind.SYSTEM, body=body, seq=_next_seq(session, thread_id))
+        session.add(m)
+        session.flush() # Should be safe as we are in a transaction
+        
+        # Try to broadcast if manager is available
+        try:
+            await manager.broadcast_to_thread({
+                "type": "new_message",
+                "thread_id": thread_id,
+                "message": serialize_message(m, session)
+            }, thread_id)
+        except Exception as e:
+            print(f"⚠️ Failed to broadcast system message: {e}")
+            
+    except Exception as e:
+        print(f"❌ Failed to create system message: {e}")
+        # Don't re-raise to prevent main action failure
 
 # ---------------------
 # Lifespan
@@ -883,6 +905,8 @@ async def list_events(
             "occupied_spots": 0,  # TODO: Calculate from bookings
             "level_needed": "All Levels",  # TODO: Add to Event model if needed
             "auto_accept": event.auto_accept if event.auto_accept is not None else False,
+            "status": event.status.value if event.status else "ACTIVE",
+            "cancellation_deadline_hours": event.cancellation_deadline_hours,
             "images": {
                 "image_1": event.image_1,
                 "image_2": event.image_2,
@@ -997,6 +1021,8 @@ async def get_event_by_id(
             "occupied_spots": 0,  # TODO: Calculate from bookings
             "level_needed": "All Levels",  # TODO: Add to Event model if needed
             "auto_accept": event.auto_accept if event.auto_accept is not None else False,
+            "status": event.status.value if event.status else "ACTIVE",
+            "cancellation_deadline_hours": event.cancellation_deadline_hours,
             "images": {
                 "image_1": event.image_1,
                 "image_2": event.image_2,
@@ -1032,6 +1058,7 @@ async def create_event(
         activity_type = event_data.get("activity_type")
         location = event_data.get("location")
         address = event_data.get("address")
+        cancellation_deadline_hours = event_data.get("cancellation_deadline_hours", 24)
         # Force use current user as creator for security
         created_by = current_user.id
         
@@ -1056,7 +1083,8 @@ async def create_event(
             activity_type=activity_type,
             location=location,
             address=address,
-            created_by=created_by
+            created_by=created_by,
+            cancellation_deadline_hours=cancellation_deadline_hours
         )
         session.add(new_event)
         session.flush()  # Flush to get the event ID
@@ -1089,6 +1117,8 @@ async def create_event(
             "location": new_event.location,
             "address": new_event.address,
             "created_by": new_event.created_by,
+            "status": new_event.status,
+            "cancellation_deadline_hours": new_event.cancellation_deadline_hours,
             "images": {
                 "image_1": new_event.image_1,
                 "image_2": new_event.image_2,
@@ -1219,6 +1249,48 @@ async def update_event(
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update event: {str(e)}")
 
+@app.post("/events/{event_id}/cancel")
+async def cancel_event(
+    event_id: str,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Cancel an event. Only the creator can cancel. Requires authentication."""
+    try:
+        # Get the event
+        event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+        
+        # Check if current user is the creator
+        if event.created_by != current_user.id:
+            raise HTTPException(status_code=403, detail="Only the event creator can cancel this event")
+        
+        if event.status == EventStatus.CANCELED:
+            raise HTTPException(status_code=400, detail="Event is already canceled")
+            
+        # Update status
+        event.status = EventStatus.CANCELED
+        
+        # Notify participants
+        thread = session.execute(
+            select(Thread).where(Thread.event_id == event_id)
+        ).scalar_one_or_none()
+        
+        if thread:
+            thread.is_locked = True
+            await system_message(session, thread.id, f"⚠️ Event has been canceled by the host.")
+            
+        session.commit()
+        
+        return {"message": "Event canceled successfully", "event_id": event.id}
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to cancel event: {str(e)}")
+
 @app.post("/rsvps")
 async def create_rsvp(
     event_id: str, 
@@ -1327,7 +1399,74 @@ async def create_request(
         ).scalar_one_or_none()
         
         if existing_request:
-            raise HTTPException(400, "You already have a request for this event")
+            # If existing request is canceled, declined, or expired, allow "re-requesting" by updating it
+            if existing_request.status in [RequestStatus.CANCELED, RequestStatus.DECLINED, RequestStatus.EXPIRED]:
+                 # Reuse the existing request object
+                 req = existing_request
+                 req.status = RequestStatus.SUBMITTED
+                 req.created_at = dt.datetime.now(dt.timezone.utc) # Update timestamp
+                 
+                 # Determine auto-accept strictly on the server side
+                 should_auto_accept = bool(payload.auto_accept) or bool(getattr(event, "auto_accept", False))
+                 req.auto_accept = should_auto_accept
+
+                 # If auto-accept is enabled or event is auto-accept
+                 if req.auto_accept:
+                    req.status = RequestStatus.ACCEPTED
+                    
+                    # Create booking (check if one exists first to avoid duplicates/errors)
+                    existing_booking = session.execute(select(Booking).where(Booking.request_id == req.id)).scalar_one_or_none()
+                    if existing_booking:
+                        existing_booking.status = BookingStatus.CONFIRMED
+                    else:
+                        booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
+                        session.add(booking)
+                    
+                    session.flush()
+
+                    # Find or create the event group chat
+                    thread = session.execute(
+                        select(Thread).where(Thread.event_id == payload.event_id)
+                    ).scalar_one_or_none()
+                    
+                    if not thread:
+                        # Create new group chat for this event
+                        thread = Thread(scope=ThreadScope.BOOKING, event_id=payload.event_id)
+                        session.add(thread)
+                        session.flush()
+                        
+                        # Add the host as the first participant
+                        host_participant = ThreadParticipant(thread_id=thread.id, user_id=event.created_by, role="host")
+                        session.add(host_participant)
+                        
+                        await system_message(session, thread.id, f"Welcome to the {event.title} event chat!")
+                    
+                    # Add the requesting user to the group chat
+                    existing_participant = session.execute(
+                        select(ThreadParticipant).where(
+                            ThreadParticipant.thread_id == thread.id,
+                            ThreadParticipant.user_id == current_user.id
+                        )
+                    ).scalar_one_or_none()
+                    
+                    if not existing_participant:
+                        guest_participant = ThreadParticipant(thread_id=thread.id, user_id=current_user.id, role="guest")
+                        session.add(guest_participant)
+                        
+                        guest_name = current_user.display_name
+                        await system_message(session, thread.id, f"{guest_name} has joined the event!")
+                 
+                 session.commit()
+                 
+                 # Return same structure as new request
+                 thread = session.execute(select(Thread).where(Thread.event_id == payload.event_id)).scalar_one_or_none()
+                 return {
+                    "request_id": req.id,
+                    "thread_id": thread.id if thread else None,
+                    "status": req.status
+                 }
+            else:
+                raise HTTPException(409, "You already have a request for this event")
         
         # Determine auto-accept strictly on the server side
         should_auto_accept = bool(payload.auto_accept) or bool(getattr(event, "auto_accept", False))
@@ -1480,6 +1619,88 @@ async def act_on_request(
     except Exception as e:
         session.rollback()
         raise HTTPException(500, f"Failed to process request action: {str(e)}")
+
+@app.post("/requests/{request_id}/cancel")
+async def cancel_request(
+    request_id: str,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Cancel a request or leave an event. Requires authentication."""
+    try:
+        req = session.execute(select(Request).where(Request.id == request_id)).scalar_one_or_none()
+        if not req:
+            raise HTTPException(404, "Request not found")
+            
+        if req.guest_id != current_user.id:
+            raise HTTPException(403, "Only the requester can cancel their request")
+            
+        if req.status in [RequestStatus.CANCELED, RequestStatus.DECLINED, RequestStatus.EXPIRED]:
+            raise HTTPException(400, f"Request is already {req.status.lower()}")
+            
+        # If already accepted (booked), check deadline
+        if req.status == RequestStatus.ACCEPTED:
+            event = session.execute(select(Event).where(Event.id == req.event_id)).scalar_one_or_none()
+            if not event:
+                raise HTTPException(404, "Event not found")
+                
+            # Check deadline
+            if event.starts_at:
+                # Check if starts_at is offset-aware
+                starts_at = event.starts_at
+                if starts_at.tzinfo is None:
+                    starts_at = starts_at.replace(tzinfo=dt.timezone.utc)
+                
+                deadline = starts_at - timedelta(hours=event.cancellation_deadline_hours)
+                now = dt.datetime.now(dt.timezone.utc)
+                
+                if now > deadline:
+                    raise HTTPException(400, f"Cannot cancel less than {event.cancellation_deadline_hours} hours before event start")
+            
+            # Update booking status
+            booking = session.execute(select(Booking).where(Booking.request_id == req.id)).scalar_one_or_none()
+            if booking:
+                booking.status = BookingStatus.CANCELED_BY_GUEST
+                
+            # Notify group chat
+            thread = session.execute(
+                select(Thread).where(Thread.event_id == req.event_id)
+            ).scalar_one_or_none()
+            
+            if thread:
+                # Remove from participants
+                participant = session.execute(
+                    select(ThreadParticipant).where(
+                        ThreadParticipant.thread_id == thread.id,
+                        ThreadParticipant.user_id == current_user.id
+                    )
+                ).scalar_one_or_none()
+                
+                if participant:
+                    session.delete(participant)
+                    
+                    # Get user name for message
+                    user = session.execute(select(User).where(User.id == current_user.id)).scalar_one_or_none()
+                    user_name = user.display_name if user else "A participant"
+                    
+                    # Send system message BEFORE committing transaction
+                    # We'll queue it to be sent after commit or handle it here?
+                    # system_message is async and likely does db writes. 
+                    # We should probably not delete participant yet if we want them to trigger a message?
+                    # No, system message is sent by system (no sender needed).
+                    await system_message(session, thread.id, f"{user_name} has left the event.")
+
+        req.status = RequestStatus.CANCELED
+        session.commit()
+        
+        return {"message": "Request canceled successfully", "status": req.status}
+        
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(500, f"Failed to cancel request: {str(e)}")
 
 @app.post("/dev/seed")
 async def seed_database(session=Depends(get_session)):
