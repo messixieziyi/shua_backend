@@ -40,7 +40,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, EmailStr
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, String, Text, UniqueConstraint, func, select, create_engine, text, delete,
+    BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, String, Text, UniqueConstraint, func, select, create_engine, text, delete, JSON, Date
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.exc import IntegrityError
@@ -139,6 +139,13 @@ class User(Base):
     gallery_image_2: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
     gallery_image_3: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
     gallery_image_4: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    gallery_image_5: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    gallery_image_6: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
+    first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    last_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    gender: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    birthday: Mapped[Optional[dt.date]] = mapped_column(Date, nullable=True)
+    sports: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
 
 class Event(Base):
@@ -288,6 +295,13 @@ class UserProfileUpdate(BaseModel):
     gallery_image_2: Optional[str] = None  # Base64 encoded image
     gallery_image_3: Optional[str] = None  # Base64 encoded image
     gallery_image_4: Optional[str] = None  # Base64 encoded image
+    gallery_image_5: Optional[str] = None  # Base64 encoded image
+    gallery_image_6: Optional[str] = None  # Base64 encoded image
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    gender: Optional[str] = None
+    birthday: Optional[dt.date] = None
+    sports: Optional[list] = None
 
 class EventImagesUpdate(BaseModel):
     image_1: Optional[str] = None  # Base64 encoded image
@@ -315,6 +329,8 @@ class UserRegister(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     display_name: str = Field(min_length=1, max_length=120)
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -337,6 +353,13 @@ class UserOut(BaseModel):
     gallery_image_2: Optional[str] = None
     gallery_image_3: Optional[str] = None
     gallery_image_4: Optional[str] = None
+    gallery_image_5: Optional[str] = None
+    gallery_image_6: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    gender: Optional[str] = None
+    birthday: Optional[dt.date] = None
+    sports: Optional[list] = None
     created_at: Optional[str] = None
 
 # ---------------------
@@ -570,7 +593,9 @@ async def register(user_data: UserRegister, session=Depends(get_session)):
         new_user = User(
             email=user_data.email,
             display_name=user_data.display_name,
-            hashed_password=hashed_password
+            hashed_password=hashed_password,
+            first_name=user_data.first_name,
+            last_name=user_data.last_name
         )
         session.add(new_user)
         session.commit()
@@ -650,6 +675,13 @@ async def get_current_user_info(current_user: User = Depends(get_current_user)):
         gallery_image_2=current_user.gallery_image_2,
         gallery_image_3=current_user.gallery_image_3,
         gallery_image_4=current_user.gallery_image_4,
+        gallery_image_5=current_user.gallery_image_5,
+        gallery_image_6=current_user.gallery_image_6,
+        first_name=current_user.first_name,
+        last_name=current_user.last_name,
+        gender=current_user.gender,
+        birthday=current_user.birthday,
+        sports=current_user.sports,
         created_at=current_user.created_at.isoformat() if current_user.created_at else None
     )
 
@@ -669,6 +701,13 @@ async def get_current_user_info(current_user: User = Depends(get_current_user), 
         "gallery_image_2": current_user.gallery_image_2,
         "gallery_image_3": current_user.gallery_image_3,
         "gallery_image_4": current_user.gallery_image_4,
+        "gallery_image_5": current_user.gallery_image_5,
+        "gallery_image_6": current_user.gallery_image_6,
+        "first_name": current_user.first_name,
+        "last_name": current_user.last_name,
+        "gender": current_user.gender,
+        "birthday": current_user.birthday,
+        "sports": current_user.sports,
         "created_at": current_user.created_at.isoformat() if current_user.created_at else None
     }
 
@@ -719,13 +758,28 @@ async def update_user_profile(
         # Update bio if provided
         if profile_data.bio is not None:
             current_user.bio = profile_data.bio
+            
+        # Update extended profile fields
+        if profile_data.first_name is not None:
+            current_user.first_name = profile_data.first_name
+        if profile_data.last_name is not None:
+            current_user.last_name = profile_data.last_name
+        if profile_data.gender is not None:
+            current_user.gender = profile_data.gender
+        if profile_data.birthday is not None:
+            current_user.birthday = profile_data.birthday
+        if profile_data.sports is not None:
+            current_user.sports = profile_data.sports
         
         # Validate and update gallery images if provided
         for field_name, image_data in [
             ("gallery_image_1", profile_data.gallery_image_1),
             ("gallery_image_2", profile_data.gallery_image_2),
             ("gallery_image_3", profile_data.gallery_image_3),
-            ("gallery_image_4", profile_data.gallery_image_4)
+            ("gallery_image_3", profile_data.gallery_image_3),
+            ("gallery_image_4", profile_data.gallery_image_4),
+            ("gallery_image_5", profile_data.gallery_image_5),
+            ("gallery_image_6", profile_data.gallery_image_6)
         ]:
             if image_data is not None:
                 if image_data:  # Not empty string
@@ -745,7 +799,15 @@ async def update_user_profile(
                 "gallery_image_1": current_user.gallery_image_1,
                 "gallery_image_2": current_user.gallery_image_2,
                 "gallery_image_3": current_user.gallery_image_3,
-                "gallery_image_4": current_user.gallery_image_4
+                "gallery_image_3": current_user.gallery_image_3,
+                "gallery_image_4": current_user.gallery_image_4,
+                "gallery_image_5": current_user.gallery_image_5,
+                "gallery_image_6": current_user.gallery_image_6,
+                "first_name": current_user.first_name,
+                "last_name": current_user.last_name,
+                "gender": current_user.gender,
+                "birthday": current_user.birthday,
+                "sports": current_user.sports
             }
         }
     except HTTPException:
