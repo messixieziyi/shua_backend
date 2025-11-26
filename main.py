@@ -52,10 +52,17 @@ from argon2 import PasswordHasher
 from jose import JWTError, jwt
 from datetime import timedelta
 
+# Cloudinary imports
+from cloudinary_config import validate_and_upload_image, delete_image, is_cloudinary_configured
+
 # ---------------------
 # Database
 # ---------------------
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Try to get DATABASE_URL from environment, fallback to SQLite
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./dev.db")
@@ -230,10 +237,15 @@ class MessageRead(Base):
 class Tag(Base):
     __tablename__ = "tags"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name: Mapped[str] = mapped_column(String(50), unique=True)
+    name: Mapped[str] = mapped_column(String(50))  # Removed unique constraint
+    sport_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # Sport-specific tags
     color: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)  # Hex color code
     description: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('name', 'sport_type', name='uix_tag_name_sport'),
+    )
 
 class EventTag(Base):
     __tablename__ = "event_tags"
@@ -399,9 +411,14 @@ import base64
 import re
 
 def validate_base64_image(image_data: str, max_size_mb: int = 5) -> tuple[bool, str]:
-    """Validate base64 encoded image data or image URL."""
+    """
+    Validate base64 encoded image data or image URL.
+    
+    Note: This function is kept for backward compatibility but now delegates
+    to Cloudinary for actual uploads. Use validate_and_upload_image for new code.
+    """
     try:
-        # Allow HTTP/HTTPS URLs (for existing images from Unsplash, etc.)
+        # Allow HTTP/HTTPS URLs (for existing images from Unsplash, Cloudinary, etc.)
         if image_data.startswith('http://') or image_data.startswith('https://'):
             return True, "Valid image URL"
         
@@ -723,13 +740,25 @@ async def update_profile_picture(
     """Update user's profile picture. Requires authentication."""
     try:
         if profile_data.profile_picture:
-            # Validate the image
-            is_valid, message = validate_base64_image(profile_data.profile_picture, max_size_mb=2)
-            if not is_valid:
+            # Upload to Cloudinary and get URL
+            success, message, new_url = validate_and_upload_image(
+                profile_data.profile_picture,
+                old_image_url=current_user.profile_picture,
+                folder="shua/profile_pictures",
+                max_size_mb=2
+            )
+            
+            if not success:
                 raise HTTPException(status_code=400, detail=message)
+            
+            # Update user's profile picture with Cloudinary URL
+            current_user.profile_picture = new_url
+        else:
+            # If None or empty, remove profile picture
+            if current_user.profile_picture:
+                delete_image(current_user.profile_picture)
+            current_user.profile_picture = None
         
-        # Update user's profile picture
-        current_user.profile_picture = profile_data.profile_picture
         session.commit()
         
         return {
@@ -776,17 +805,27 @@ async def update_user_profile(
             ("gallery_image_1", profile_data.gallery_image_1),
             ("gallery_image_2", profile_data.gallery_image_2),
             ("gallery_image_3", profile_data.gallery_image_3),
-            ("gallery_image_3", profile_data.gallery_image_3),
             ("gallery_image_4", profile_data.gallery_image_4),
             ("gallery_image_5", profile_data.gallery_image_5),
             ("gallery_image_6", profile_data.gallery_image_6)
         ]:
             if image_data is not None:
-                if image_data:  # Not empty string
-                    is_valid, message = validate_base64_image(image_data, max_size_mb=5)
-                    if not is_valid:
-                        raise HTTPException(status_code=400, detail=f"{field_name}: {message}")
-                setattr(current_user, field_name, image_data)
+                # Get current image URL
+                old_image_url = getattr(current_user, field_name)
+                
+                # Upload to Cloudinary and get URL
+                success, message, new_url = validate_and_upload_image(
+                    image_data,
+                    old_image_url=old_image_url,
+                    folder="shua/gallery",
+                    max_size_mb=5
+                )
+                
+                if not success:
+                    raise HTTPException(status_code=400, detail=f"{field_name}: {message}")
+                
+                # Update with Cloudinary URL (or None if image was removed)
+                setattr(current_user, field_name, new_url)
         
         session.commit()
         
@@ -834,24 +873,29 @@ async def update_event_images(
         if event.created_by != current_user.id:
             raise HTTPException(status_code=403, detail="Only event creator can update images")
         
-        # Validate images if provided
+        # Validate and upload images if provided
         for field_name, image_data in [
             ("image_1", images_data.image_1),
             ("image_2", images_data.image_2), 
             ("image_3", images_data.image_3)
         ]:
-            if image_data:
-                is_valid, message = validate_base64_image(image_data, max_size_mb=3)
-                if not is_valid:
+            if image_data is not None:
+                # Get current image URL
+                old_image_url = getattr(event, field_name)
+                
+                # Upload to Cloudinary and get URL
+                success, message, new_url = validate_and_upload_image(
+                    image_data,
+                    old_image_url=old_image_url,
+                    folder="shua/events",
+                    max_size_mb=3
+                )
+                
+                if not success:
                     raise HTTPException(status_code=400, detail=f"{field_name}: {message}")
-        
-        # Update event images
-        if images_data.image_1 is not None:
-            event.image_1 = images_data.image_1
-        if images_data.image_2 is not None:
-            event.image_2 = images_data.image_2
-        if images_data.image_3 is not None:
-            event.image_3 = images_data.image_3
+                
+                # Update with Cloudinary URL (or None if image was removed)
+                setattr(event, field_name, new_url)
             
         session.commit()
         
@@ -1247,11 +1291,22 @@ async def update_event(
             ("image_3", event_data.image_3)
         ]:
             if image_data is not None:
-                if image_data:  # Not empty string
-                    is_valid, message = validate_base64_image(image_data, max_size_mb=5)
-                    if not is_valid:
-                        raise HTTPException(status_code=400, detail=f"{field_name}: {message}")
-                setattr(event, field_name, image_data)
+                # Get current image URL
+                old_image_url = getattr(event, field_name)
+                
+                # Upload to Cloudinary and get URL
+                success, message, new_url = validate_and_upload_image(
+                    image_data,
+                    old_image_url=old_image_url,
+                    folder="shua/events",
+                    max_size_mb=5
+                )
+                
+                if not success:
+                    raise HTTPException(status_code=400, detail=f"{field_name}: {message}")
+                
+                # Update with Cloudinary URL (or None if image was removed)
+                setattr(event, field_name, new_url)
         
         # Update tags if provided
         if event_data.tag_ids is not None:
@@ -1786,45 +1841,90 @@ async def seed_database(session=Depends(get_session)):
 
 @app.post("/dev/seed-tags")
 async def seed_tags(session=Depends(get_session)):
-    """Endpoint to seed the database with sample tags."""
+    """Endpoint to seed the database with sport-specific tags."""
     sample_tags = [
-        {"name": "Beginner", "color": "#10b981", "description": "Suitable for beginners"},
-        {"name": "Advanced", "color": "#ef4444", "description": "For experienced participants"},
-        {"name": "Outdoor", "color": "#059669", "description": "Outdoor activities"},
-        {"name": "Indoor", "color": "#3b82f6", "description": "Indoor activities"},
-        {"name": "Morning", "color": "#f59e0b", "description": "Morning sessions"},
-        {"name": "Evening", "color": "#8b5cf6", "description": "Evening sessions"},
-        {"name": "Weekend", "color": "#ec4899", "description": "Weekend events"},
-        {"name": "Free", "color": "#10b981", "description": "Free events"},
-        {"name": "Paid", "color": "#f59e0b", "description": "Paid events"},
-        {"name": "Group", "color": "#6366f1", "description": "Group activities"},
-        {"name": "Solo", "color": "#8b5cf6", "description": "Individual activities"},
-        {"name": "Fitness", "color": "#ef4444", "description": "Fitness related"},
-        {"name": "Social", "color": "#ec4899", "description": "Social events"},
-        {"name": "Competitive", "color": "#dc2626", "description": "Competitive events"},
-        {"name": "Casual", "color": "#6b7280", "description": "Casual activities"}
+        # Tennis tags
+        {"name": "Competitive", "sport_type": "Tennis", "color": "#dc2626", "description": "Competitive tennis match"},
+        {"name": "Casual", "sport_type": "Tennis", "color": "#10b981", "description": "Casual tennis play"},
+        {"name": "Singles", "sport_type": "Tennis", "color": "#3b82f6", "description": "Singles match"},
+        {"name": "Doubles", "sport_type": "Tennis", "color": "#8b5cf6", "description": "Doubles match"},
+        {"name": "Beginner-Friendly", "sport_type": "Tennis", "color": "#10b981", "description": "Welcoming to beginners"},
+        {"name": "Advanced Players", "sport_type": "Tennis", "color": "#ef4444", "description": "For advanced players"},
+        
+        # Badminton tags
+        {"name": "Competitive", "sport_type": "Badminton", "color": "#dc2626", "description": "Competitive badminton match"},
+        {"name": "Casual", "sport_type": "Badminton", "color": "#10b981", "description": "Casual badminton play"},
+        {"name": "Singles", "sport_type": "Badminton", "color": "#3b82f6", "description": "Singles match"},
+        {"name": "Doubles", "sport_type": "Badminton", "color": "#8b5cf6", "description": "Doubles match"},
+        {"name": "Beginner-Friendly", "sport_type": "Badminton", "color": "#10b981", "description": "Welcoming to beginners"},
+        {"name": "Advanced Players", "sport_type": "Badminton", "color": "#ef4444", "description": "For advanced players"},
+        
+        # Golf tags
+        {"name": "9 Holes", "sport_type": "Golf", "color": "#10b981", "description": "9 hole round"},
+        {"name": "18 Holes", "sport_type": "Golf", "color": "#3b82f6", "description": "Full 18 hole round"},
+        {"name": "Driving Range", "sport_type": "Golf", "color": "#f59e0b", "description": "Practice at driving range"},
+        {"name": "Beginner-Friendly", "sport_type": "Golf", "color": "#10b981", "description": "Welcoming to beginners"},
+        {"name": "Competitive", "sport_type": "Golf", "color": "#dc2626", "description": "Competitive round"},
+        
+        # Bouldering tags
+        {"name": "Indoor", "sport_type": "Bouldering", "color": "#3b82f6", "description": "Indoor climbing gym"},
+        {"name": "Outdoor", "sport_type": "Bouldering", "color": "#059669", "description": "Outdoor bouldering"},
+        {"name": "Beginner-Friendly", "sport_type": "Bouldering", "color": "#10b981", "description": "Welcoming to beginners"},
+        {"name": "Advanced Routes", "sport_type": "Bouldering", "color": "#ef4444", "description": "Advanced difficulty routes"},
+        {"name": "Top Rope", "sport_type": "Bouldering", "color": "#8b5cf6", "description": "Top rope climbing"},
+        
+        # Pickleball tags
+        {"name": "Competitive", "sport_type": "Pickleball", "color": "#dc2626", "description": "Competitive pickleball"},
+        {"name": "Casual", "sport_type": "Pickleball", "color": "#10b981", "description": "Casual pickleball play"},
+        {"name": "Doubles", "sport_type": "Pickleball", "color": "#8b5cf6", "description": "Doubles match"},
+        {"name": "Beginner-Friendly", "sport_type": "Pickleball", "color": "#10b981", "description": "Welcoming to beginners"},
+        
+        # Gym tags
+        {"name": "Strength Training", "sport_type": "Gym", "color": "#dc2626", "description": "Strength and resistance training"},
+        {"name": "Cardio", "sport_type": "Gym", "color": "#f59e0b", "description": "Cardio workout"},
+        {"name": "CrossFit", "sport_type": "Gym", "color": "#ef4444", "description": "CrossFit workout"},
+        {"name": "Beginner-Friendly", "sport_type": "Gym", "color": "#10b981", "description": "Welcoming to beginners"},
+        {"name": "Partner Workout", "sport_type": "Gym", "color": "#8b5cf6", "description": "Partner or buddy workout"},
+        
+        # Hiking tags
+        {"name": "Easy Trail", "sport_type": "Hiking", "color": "#10b981", "description": "Easy difficulty trail"},
+        {"name": "Moderate Trail", "sport_type": "Hiking", "color": "#f59e0b", "description": "Moderate difficulty trail"},
+        {"name": "Difficult Trail", "sport_type": "Hiking", "color": "#ef4444", "description": "Difficult/challenging trail"},
+        {"name": "Scenic", "sport_type": "Hiking", "color": "#3b82f6", "description": "Scenic views"},
+        {"name": "Dog-Friendly", "sport_type": "Hiking", "color": "#8b5cf6", "description": "Dogs welcome"},
+        
+        # Ski/Snowboarding tags
+        {"name": "Beginner Slopes", "sport_type": "Ski/Snowboarding", "color": "#10b981", "description": "Beginner/green slopes"},
+        {"name": "Intermediate", "sport_type": "Ski/Snowboarding", "color": "#3b82f6", "description": "Intermediate/blue slopes"},
+        {"name": "Advanced", "sport_type": "Ski/Snowboarding", "color": "#ef4444", "description": "Advanced/black slopes"},
+        {"name": "Backcountry", "sport_type": "Ski/Snowboarding", "color": "#dc2626", "description": "Backcountry skiing/boarding"},
+        {"name": "Park", "sport_type": "Ski/Snowboarding", "color": "#8b5cf6", "description": "Terrain park"},
     ]
     
     created_tags = []
     for tag_data in sample_tags:
-        # Check if tag already exists
+        # Check if tag already exists with same name and sport_type
         existing_tag = session.execute(
-            select(Tag).where(Tag.name == tag_data["name"])
+            select(Tag).where(
+                Tag.name == tag_data["name"],
+                Tag.sport_type == tag_data.get("sport_type")
+            )
         ).scalar_one_or_none()
         
         if not existing_tag:
             new_tag = Tag(
                 name=tag_data["name"],
+                sport_type=tag_data.get("sport_type"),
                 color=tag_data["color"],
                 description=tag_data["description"]
             )
             session.add(new_tag)
-            created_tags.append(tag_data["name"])
+            created_tags.append(f"{tag_data['name']} ({tag_data.get('sport_type', 'General')})")
     
     session.commit()
     
     return {
-        "message": f"Created {len(created_tags)} sample tags",
+        "message": f"Created {len(created_tags)} sport-specific tags",
         "created_tags": created_tags,
         "total_tags": len(sample_tags)
     }
@@ -2432,15 +2532,25 @@ async def health_check():
 
 @app.get("/tags")
 async def list_tags(
+    sport: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Get all available tags. Requires authentication."""
-    tags = session.execute(select(Tag).order_by(Tag.name)).scalars().all()
+    """Get all available tags, optionally filtered by sport. Requires authentication."""
+    if sport:
+        # Filter tags by sport_type
+        tags = session.execute(
+            select(Tag).where(Tag.sport_type == sport).order_by(Tag.name)
+        ).scalars().all()
+    else:
+        # Return all tags
+        tags = session.execute(select(Tag).order_by(Tag.name)).scalars().all()
+    
     return [
         {
             "id": tag.id,
             "name": tag.name,
+            "sport_type": tag.sport_type,
             "color": tag.color,
             "description": tag.description,
             "created_at": tag.created_at.isoformat()
