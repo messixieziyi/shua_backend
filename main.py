@@ -412,7 +412,10 @@ def decode_access_token(token: str) -> Optional[dict]:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
-    except JWTError:
+    except JWTError as e:
+        print(f"JWT decode error: {str(e)}")
+        print(f"Token preview: {token[:20]}..." if len(token) > 20 else f"Token: {token}")
+        print(f"SECRET_KEY configured: {'Yes' if SECRET_KEY != 'your-secret-key-change-in-production-please-make-it-secure' else 'Using default (INSECURE!)'}")
         return None
 
 # ---------------------
