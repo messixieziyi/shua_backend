@@ -1,2 +1,2 @@
-web: python3 run_migrations.py && uvicorn main:app --host 0.0.0.0 --port $PORT
+web: uvicorn main:app --host 0.0.0.0 --port $PORT
 
