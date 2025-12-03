@@ -253,6 +253,17 @@ class EventTag(Base):
     tag_id: Mapped[str] = mapped_column(ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
 
+class EventLike(Base):
+    __tablename__ = "event_likes"
+    event_id: Mapped[str] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('event_id', 'user_id', name='uix_event_user_like'),
+    )
+
+
 # ---------------------
 # Schemas
 # ---------------------
@@ -994,6 +1005,21 @@ async def list_events(
             select(Tag).join(EventTag).where(EventTag.event_id == event.id)
         ).scalars().all()
         
+        # Get like count
+        like_count = session.execute(
+            select(func.count(EventLike.user_id)).where(EventLike.event_id == event.id)
+        ).scalar_one()
+        
+        # Check if current user liked this event
+        is_liked_by_user = False
+        if current_user:
+            is_liked_by_user = session.execute(
+                select(EventLike).where(
+                    EventLike.event_id == event.id,
+                    EventLike.user_id == current_user.id
+                )
+            ).scalar_one_or_none() is not None
+        
         result.append({
             "id": event.id,
             "title": event.title,
@@ -1013,6 +1039,8 @@ async def list_events(
             "auto_accept": event.auto_accept if event.auto_accept is not None else False,
             "status": event.status.value if event.status else "ACTIVE",
             "cancellation_deadline_hours": event.cancellation_deadline_hours,
+            "like_count": like_count,
+            "is_liked_by_user": is_liked_by_user,
             "images": {
                 "image_1": event.image_1,
                 "image_2": event.image_2,
@@ -1030,6 +1058,76 @@ async def list_events(
         })
     
     return result
+
+    return result
+
+@app.get("/events/liked")
+async def get_liked_events(
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get all events liked by the current user."""
+    try:
+        # Join events with event_likes
+        query = select(Event).join(EventLike).where(EventLike.user_id == current_user.id)
+        events = session.execute(query).scalars().all()
+        
+        result = []
+        for event in events:
+            # Get host/creator information
+            creator = session.execute(select(User).where(User.id == event.created_by)).scalar_one_or_none()
+            
+            # Get tags for this event
+            event_tags = session.execute(
+                select(Tag).join(EventTag).where(EventTag.event_id == event.id)
+            ).scalars().all()
+            
+            # Get like count
+            like_count = session.execute(
+                select(func.count(EventLike.user_id)).where(EventLike.event_id == event.id)
+            ).scalar_one()
+            
+            result.append({
+                "id": event.id,
+                "title": event.title,
+                "description": event.description,
+                "capacity": event.capacity,
+                "starts_at": event.starts_at.isoformat(),
+                "time": event.starts_at.isoformat(),
+                "activity_type": event.activity_type,
+                "sport_type": event.activity_type,
+                "location": event.location,
+                "address": event.address,
+                "created_by": event.created_by,
+                "host_name": creator.display_name if creator else "Unknown Host",
+                "available_spots": event.capacity,
+                "occupied_spots": 0,
+                "level_needed": "All Levels",
+                "auto_accept": event.auto_accept if event.auto_accept is not None else False,
+                "status": event.status.value if event.status else "ACTIVE",
+                "cancellation_deadline_hours": event.cancellation_deadline_hours,
+                "like_count": like_count,
+                "is_liked_by_user": True,
+                "images": {
+                    "image_1": event.image_1,
+                    "image_2": event.image_2,
+                    "image_3": event.image_3
+                },
+                "tags": [
+                    {
+                        "id": tag.id,
+                        "name": tag.name,
+                        "color": tag.color,
+                        "description": tag.description
+                    }
+                    for tag in event_tags
+                ]
+            })
+        
+        return result
+    except Exception as e:
+        print(f"❌ Error fetching liked events: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch liked events: {str(e)}")
 
 @app.get("/events/my")
 async def get_my_events(
@@ -1110,6 +1208,21 @@ async def get_event_by_id(
             select(Tag).join(EventTag).where(EventTag.event_id == event.id)
         ).scalars().all()
         
+        # Get like count
+        like_count = session.execute(
+            select(func.count(EventLike.user_id)).where(EventLike.event_id == event.id)
+        ).scalar_one()
+        
+        # Check if current user liked this event
+        is_liked_by_user = False
+        if current_user:
+            is_liked_by_user = session.execute(
+                select(EventLike).where(
+                    EventLike.event_id == event.id,
+                    EventLike.user_id == current_user.id
+                )
+            ).scalar_one_or_none() is not None
+
         return {
             "id": event.id,
             "title": event.title,
@@ -1129,6 +1242,8 @@ async def get_event_by_id(
             "auto_accept": event.auto_accept if event.auto_accept is not None else False,
             "status": event.status.value if event.status else "ACTIVE",
             "cancellation_deadline_hours": event.cancellation_deadline_hours,
+            "like_count": like_count,
+            "is_liked_by_user": is_liked_by_user,
             "images": {
                 "image_1": event.image_1,
                 "image_2": event.image_2,
@@ -1366,7 +1481,6 @@ async def update_event(
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update event: {str(e)}")
 
-@app.post("/events/{event_id}/cancel")
 async def cancel_event(
     event_id: str,
     current_user: User = Depends(get_current_user),
@@ -1407,6 +1521,86 @@ async def cancel_event(
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to cancel event: {str(e)}")
+
+@app.post("/events/{event_id}/like")
+async def like_event(
+    event_id: str,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Like an event."""
+    try:
+        # Check if event exists
+        event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+            
+        # Check if already liked
+        existing_like = session.execute(
+            select(EventLike).where(
+                EventLike.event_id == event_id,
+                EventLike.user_id == current_user.id
+            )
+        ).scalar_one_or_none()
+        
+        if existing_like:
+            # Already liked, just return current count
+            pass
+        else:
+            # Create new like
+            new_like = EventLike(event_id=event_id, user_id=current_user.id)
+            session.add(new_like)
+            session.commit()
+            
+        # Get updated like count
+        like_count = session.execute(
+            select(func.count(EventLike.user_id)).where(EventLike.event_id == event_id)
+        ).scalar_one()
+        
+        return {"message": "Event liked", "like_count": like_count}
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to like event: {str(e)}")
+
+@app.delete("/events/{event_id}/like")
+async def unlike_event(
+    event_id: str,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Unlike an event."""
+    try:
+        # Check if event exists
+        event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+        if not event:
+            raise HTTPException(status_code=404, detail="Event not found")
+            
+        # Delete like if exists
+        session.execute(
+            delete(EventLike).where(
+                EventLike.event_id == event_id,
+                EventLike.user_id == current_user.id
+            )
+        )
+        session.commit()
+            
+        # Get updated like count
+        like_count = session.execute(
+            select(func.count(EventLike.user_id)).where(EventLike.event_id == event_id)
+        ).scalar_one()
+        
+        return {"message": "Event unliked", "like_count": like_count}
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to unlike event: {str(e)}")
+
+
 
 @app.post("/rsvps")
 async def create_rsvp(

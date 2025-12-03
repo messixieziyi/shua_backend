@@ -113,6 +113,49 @@ def run_migrations():
                 ADD COLUMN sport_type VARCHAR(50)
             """)
             migrations_run.append("tags.sport_type")
+            
+        # Migration 4: Create event_likes table
+        if db_type == 'postgresql':
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'event_likes'
+                )
+            """)
+            table_exists = cursor.fetchone()[0]
+        else:  # sqlite
+            cursor.execute("""
+                SELECT name FROM sqlite_master 
+                WHERE type='table' AND name='event_likes'
+            """)
+            table_exists = cursor.fetchone() is not None
+
+        if not table_exists:
+            print("➕ Migration 4: Creating event_likes table...")
+            if db_type == 'sqlite':
+                cursor.execute("""
+                    CREATE TABLE event_likes (
+                        event_id VARCHAR(36) NOT NULL,
+                        user_id VARCHAR(36) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (event_id, user_id),
+                        FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                    )
+                """)
+            else:  # postgresql
+                cursor.execute("""
+                    CREATE TABLE event_likes (
+                        event_id VARCHAR(36) NOT NULL,
+                        user_id VARCHAR(36) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (event_id, user_id),
+                        FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE,
+                        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                        CONSTRAINT uix_event_user_like UNIQUE (event_id, user_id)
+                    )
+                """)
+            migrations_run.append("event_likes table")
         
         # Commit all migrations
         conn.commit()
