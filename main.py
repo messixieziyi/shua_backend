@@ -742,6 +742,98 @@ async def get_current_user_info(current_user: User = Depends(get_current_user), 
         "created_at": current_user.created_at.isoformat() if current_user.created_at else None
     }
 
+@app.get("/users/{user_id}")
+async def get_user_public_profile(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get a user's public profile. Requires authentication."""
+    user = session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Return public profile info (no email)
+    return {
+        "id": user.id,
+        "display_name": user.display_name,
+        "profile_picture": user.profile_picture,
+        "bio": user.bio,
+        "gallery_image_1": user.gallery_image_1,
+        "gallery_image_2": user.gallery_image_2,
+        "gallery_image_3": user.gallery_image_3,
+        "gallery_image_4": user.gallery_image_4,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "sports": user.sports,
+        "created_at": user.created_at.isoformat() if user.created_at else None
+    }
+
+@app.get("/users/{user_id}/events")
+async def get_user_hosting_events(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get events hosted by a specific user. Requires authentication."""
+    # Verify user exists
+    user = session.execute(select(User).where(User.id == user_id)).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Get all events created by this user
+    events = session.execute(
+        select(Event).where(Event.created_by == user_id).where(Event.status == "ACTIVE")
+    ).scalars().all()
+    
+    result = []
+    for event in events:
+        # Get tags
+        event_tags = session.execute(
+            select(Tag).join(EventTag).where(EventTag.event_id == event.id)
+        ).scalars().all()
+        
+        # Get occupied spots count
+        occupied_count = session.execute(
+            select(func.count(Booking.id))
+            .where(Booking.event_id == event.id)
+            .where(Booking.status == "CONFIRMED")
+        ).scalar() or 0
+        
+        result.append({
+            "id": event.id,
+            "title": event.title,
+            "description": event.description,
+            "capacity": event.capacity,
+            "starts_at": event.starts_at.isoformat(),
+            "activity_type": event.activity_type,
+            "location": event.location,
+            "address": event.address,
+            "created_by": event.created_by,
+            "host_name": user.display_name,
+            "available_spots": event.capacity - occupied_count,
+            "occupied_spots": occupied_count,
+            "status": event.status,
+            "cancellation_deadline_hours": event.cancellation_deadline_hours,
+            "images": {
+                "image_1": event.image_1,
+                "image_2": event.image_2,
+                "image_3": event.image_3
+            },
+            "tags": [
+                {
+                    "id": tag.id,
+                    "name": tag.name,
+                    "color": tag.color,
+                    "description": tag.description
+                }
+                for tag in event_tags
+            ]
+        })
+    
+    return result
+
 # ---------------------
 # Image Upload Endpoints
 # ---------------------
