@@ -1,3 +1,2 @@
-release: python3 run_migrations.py
-web: uvicorn main:app --host 0.0.0.0 --port $PORT
+web: python3 run_migrations.py && uvicorn main:app --host 0.0.0.0 --port $PORT
 
