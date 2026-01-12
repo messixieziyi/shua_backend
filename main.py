@@ -290,6 +290,7 @@ class MessageOut(BaseModel):
 
 class TagCreate(BaseModel):
     name: str
+    sport_type: Optional[str] = None
     color: Optional[str] = None
     description: Optional[str] = None
 
@@ -2188,17 +2189,27 @@ async def seed_tags(session=Depends(get_session)):
         {"name": "Advanced", "sport_type": "Ski/Snowboarding", "color": "#ef4444", "description": "Advanced/black slopes"},
         {"name": "Backcountry", "sport_type": "Ski/Snowboarding", "color": "#dc2626", "description": "Backcountry skiing/boarding"},
         {"name": "Park", "sport_type": "Ski/Snowboarding", "color": "#8b5cf6", "description": "Terrain park"},
+        
+        # Basketball tags
+        {"name": "Pickup Game", "sport_type": "Basketball", "color": "#dc2626", "description": "Casual pickup basketball game"},
+        {"name": "Competitive", "sport_type": "Basketball", "color": "#ef4444", "description": "Competitive basketball"},
+        {"name": "3-on-3", "sport_type": "Basketball", "color": "#3b82f6", "description": "3-on-3 basketball"},
+        {"name": "5-on-5", "sport_type": "Basketball", "color": "#8b5cf6", "description": "Full court 5-on-5"},
+        {"name": "Shooting Practice", "sport_type": "Basketball", "color": "#10b981", "description": "Shooting and practice"},
+        {"name": "Beginner-Friendly", "sport_type": "Basketball", "color": "#10b981", "description": "Welcoming to beginners"},
     ]
     
     created_tags = []
     for tag_data in sample_tags:
         # Check if tag already exists with same name and sport_type
-        existing_tag = session.execute(
-            select(Tag).where(
-                Tag.name == tag_data["name"],
-                Tag.sport_type == tag_data.get("sport_type")
-            )
-        ).scalar_one_or_none()
+        query = select(Tag).where(Tag.name == tag_data["name"])
+        sport_type = tag_data.get("sport_type")
+        if sport_type:
+            query = query.where(Tag.sport_type == sport_type)
+        else:
+            query = query.where(Tag.sport_type.is_(None))
+        
+        existing_tag = session.execute(query).scalar_one_or_none()
         
         if not existing_tag:
             new_tag = Tag(
@@ -2822,15 +2833,28 @@ async def health_check():
 @app.get("/tags")
 async def list_tags(
     sport: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Get all available tags, optionally filtered by sport. Requires authentication."""
+    """Get all available tags, optionally filtered by sport. Public endpoint (no authentication required)."""
     if sport:
-        # Filter tags by sport_type
+        # Filter tags by sport_type (case-insensitive matching)
+        # Handle variations like "Ski/Snowboard" vs "Ski/Snowboarding"
+        sport_normalized = sport.strip()
         tags = session.execute(
-            select(Tag).where(Tag.sport_type == sport).order_by(Tag.name)
+            select(Tag).where(
+                func.lower(Tag.sport_type) == func.lower(sport_normalized)
+            ).order_by(Tag.name)
         ).scalars().all()
+        
+        # If no exact match, try partial match for variations
+        if not tags and "/" in sport_normalized:
+            # Try matching first part (e.g., "Ski" matches "Ski/Snowboarding")
+            sport_part = sport_normalized.split("/")[0]
+            tags = session.execute(
+                select(Tag).where(
+                    func.lower(Tag.sport_type).like(func.lower(f"{sport_part}%"))
+                ).order_by(Tag.name)
+            ).scalars().all()
     else:
         # Return all tags
         tags = session.execute(select(Tag).order_by(Tag.name)).scalars().all()
@@ -2850,22 +2874,34 @@ async def list_tags(
 @app.post("/tags")
 async def create_tag(
     tag_data: TagCreate, 
-    current_user: User = Depends(get_current_user),
     session=Depends(get_session)
 ):
-    """Create a new tag. Requires authentication."""
+    """Create a new tag. Public endpoint (no authentication required) to allow tag creation during registration."""
     try:
-        # Check if tag with same name already exists
-        existing_tag = session.execute(
-            select(Tag).where(Tag.name == tag_data.name)
-        ).scalar_one_or_none()
+        # Check if tag with same name and sport_type already exists
+        query = select(Tag).where(Tag.name == tag_data.name)
+        if tag_data.sport_type:
+            query = query.where(Tag.sport_type == tag_data.sport_type)
+        else:
+            query = query.where(Tag.sport_type.is_(None))
+        
+        existing_tag = session.execute(query).scalar_one_or_none()
         
         if existing_tag:
-            raise HTTPException(status_code=400, detail="Tag with this name already exists")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Tag '{tag_data.name}' already exists for this sport"
+            )
+        
+        # Generate a random color if not provided
+        import random
+        default_colors = ["#dc2626", "#10b981", "#3b82f6", "#8b5cf6", "#f59e0b", "#ef4444", "#059669"]
+        tag_color = tag_data.color or random.choice(default_colors)
         
         new_tag = Tag(
             name=tag_data.name,
-            color=tag_data.color,
+            sport_type=tag_data.sport_type,
+            color=tag_color,
             description=tag_data.description
         )
         session.add(new_tag)
@@ -2875,6 +2911,7 @@ async def create_tag(
         return {
             "id": new_tag.id,
             "name": new_tag.name,
+            "sport_type": new_tag.sport_type,
             "color": new_tag.color,
             "description": new_tag.description,
             "created_at": new_tag.created_at.isoformat()
