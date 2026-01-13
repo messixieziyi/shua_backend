@@ -82,10 +82,6 @@ def upload_image(
         if image_data.startswith('http://') or image_data.startswith('https://'):
             return True, image_data
         
-        # Check if Cloudinary is configured
-        if not is_cloudinary_configured():
-            return False, "Cloudinary is not configured. Please set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET environment variables."
-        
         # Validate base64 data URL format
         if not image_data.startswith('data:image/'):
             return False, "Invalid image format. Must be a data URL (data:image/...)."
@@ -109,6 +105,12 @@ def upload_image(
                 return False, f"Image too large. Maximum size is {max_size_mb}MB."
         except Exception:
             return False, "Invalid base64 encoding."
+        
+        # For local development: if Cloudinary is not configured, store base64 directly
+        if not is_cloudinary_configured():
+            # Validate and return base64 data URL as-is for local storage
+            # This allows local development without Cloudinary setup
+            return True, image_data
         
         # Upload to Cloudinary
         try:
