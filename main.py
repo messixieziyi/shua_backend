@@ -131,6 +131,21 @@ class MessageKind(str, Enum):
     USER = "user"
     SYSTEM = "system"
 
+class NotificationType(str, Enum):
+    """Extensible notification types for the system"""
+    EVENT_JOIN_REQUEST = "event_join_request"  # Someone requested to join your event
+    EVENT_JOIN_ACCEPTED = "event_join_accepted"  # Your request to join was accepted
+    EVENT_JOIN_DECLINED = "event_join_declined"  # Your request to join was declined
+    EVENT_JOINED = "event_joined"  # Someone joined your event (auto-accept or accepted)
+    EVENT_LEFT = "event_left"  # Someone left your event
+    EVENT_CANCELED = "event_canceled"  # Event you're in was canceled
+    NEW_MESSAGE = "new_message"  # New message in a chat thread
+    # Future notification types can be added here:
+    # EVENT_REMINDER = "event_reminder"
+    # EVENT_STARTING_SOON = "event_starting_soon"
+    # FRIEND_REQUEST = "friend_request"
+    # etc.
+
 # ---------------------
 # Models
 # ---------------------
@@ -263,6 +278,26 @@ class EventLike(Base):
         UniqueConstraint('event_id', 'user_id', name='uix_event_user_like'),
     )
 
+class Notification(Base):
+    __tablename__ = "notifications"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    type: Mapped[NotificationType] = mapped_column(SQLEnum(NotificationType), nullable=False)
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    is_read: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now(), index=True)
+    
+    # Optional reference fields for linking notifications to entities
+    # These allow notifications to link to events, threads, users, etc.
+    event_id: Mapped[Optional[str]] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), nullable=True)
+    thread_id: Mapped[Optional[str]] = mapped_column(ForeignKey("threads.id", ondelete="CASCADE"), nullable=True)
+    request_id: Mapped[Optional[str]] = mapped_column(ForeignKey("requests.id", ondelete="CASCADE"), nullable=True)
+    related_user_id: Mapped[Optional[str]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    
+    # Additional metadata as JSON for extensibility
+    extra_data: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+
 
 # ---------------------
 # Schemas
@@ -303,6 +338,29 @@ class TagOut(BaseModel):
 
 class EventTagCreate(BaseModel):
     tag_ids: list[str]
+
+# Notification Schemas
+class NotificationOut(BaseModel):
+    id: str
+    user_id: str
+    type: NotificationType
+    title: str
+    body: str
+    is_read: bool
+    created_at: dt.datetime
+    event_id: Optional[str] = None
+    thread_id: Optional[str] = None
+    request_id: Optional[str] = None
+    related_user_id: Optional[str] = None
+    metadata: Optional[dict] = None
+
+class NotificationListOut(BaseModel):
+    notifications: list[NotificationOut]
+    unread_count: int
+    total_count: int
+
+class NotificationMarkRead(BaseModel):
+    notification_ids: list[str]
 
 # Image Upload Schemas
 class ImageUpload(BaseModel):
@@ -538,6 +596,58 @@ def serialize_message(m: Message, session=None) -> dict:
         "created_at": m.created_at.isoformat(), 
         "seq": m.seq
     }
+
+# ---------------------
+# Notification Helper Functions
+# ---------------------
+async def create_notification(
+    session,
+    user_id: str,
+    notification_type: NotificationType,
+    title: str,
+    body: str,
+    event_id: Optional[str] = None,
+    thread_id: Optional[str] = None,
+    request_id: Optional[str] = None,
+    related_user_id: Optional[str] = None,
+    metadata: Optional[dict] = None
+) -> Notification:
+    """Create a notification and send it via WebSocket if user is connected."""
+    notification = Notification(
+        user_id=user_id,
+        type=notification_type,
+        title=title,
+        body=body,
+        event_id=event_id,
+        thread_id=thread_id,
+        request_id=request_id,
+        related_user_id=related_user_id,
+        extra_data=metadata,  # Use extra_data field name to match model
+        is_read=False
+    )
+    session.add(notification)
+    session.flush()
+    
+    # Send notification via WebSocket if user is connected
+    await manager.send_personal_message({
+        "type": "new_notification",
+        "notification": {
+            "id": notification.id,
+            "user_id": notification.user_id,
+            "type": notification.type.value,
+            "title": notification.title,
+            "body": notification.body,
+            "is_read": notification.is_read,
+            "created_at": notification.created_at.isoformat(),
+            "event_id": notification.event_id,
+            "thread_id": notification.thread_id,
+            "request_id": notification.request_id,
+            "related_user_id": notification.related_user_id,
+            "metadata": notification.extra_data
+        }
+    }, user_id)
+    
+    return notification
 
 async def system_message(session, thread_id: str, body: str):
     try:
@@ -1927,6 +2037,32 @@ async def create_request(
             
             session.flush()
 
+        # Create notifications
+        if req.auto_accept:
+            # Notify host that someone joined their event
+            await create_notification(
+                session,
+                user_id=req.host_id,
+                notification_type=NotificationType.EVENT_JOINED,
+                title=f"{current_user.display_name} joined your event",
+                body=f"{current_user.display_name} joined '{event.title}'",
+                event_id=req.event_id,
+                request_id=req.id,
+                related_user_id=current_user.id
+            )
+        else:
+            # Notify host that someone requested to join
+            await create_notification(
+                session,
+                user_id=req.host_id,
+                notification_type=NotificationType.EVENT_JOIN_REQUEST,
+                title=f"New join request for '{event.title}'",
+                body=f"{current_user.display_name} wants to join your event",
+                event_id=req.event_id,
+                request_id=req.id,
+                related_user_id=current_user.id
+            )
+        
         session.commit()
         thread_id = thread.id if req.auto_accept else None
         return {"request_id": req.id, "thread_id": thread_id, "status": req.status}
@@ -2001,6 +2137,31 @@ async def act_on_request(
                 guest_name = guest.display_name if guest else "A participant"
                 await system_message(session, thread.id, f"{guest_name} has joined the event!")
             
+            # Notify guest that their request was accepted
+            await create_notification(
+                session,
+                user_id=req.guest_id,
+                notification_type=NotificationType.EVENT_JOIN_ACCEPTED,
+                title=f"Request accepted for '{event_title}'",
+                body=f"Your request to join '{event_title}' has been accepted!",
+                event_id=req.event_id,
+                request_id=req.id,
+                thread_id=thread.id
+            )
+            
+            # Notify host that someone joined (if not already notified)
+            await create_notification(
+                session,
+                user_id=req.host_id,
+                notification_type=NotificationType.EVENT_JOINED,
+                title=f"{guest_name} joined your event",
+                body=f"{guest_name} joined '{event_title}'",
+                event_id=req.event_id,
+                request_id=req.id,
+                thread_id=thread.id,
+                related_user_id=req.guest_id
+            )
+            
             session.flush()
             session.commit()
             return {"status": req.status, "booking_id": booking.id, "thread_id": thread.id}
@@ -2011,11 +2172,34 @@ async def act_on_request(
                 raise HTTPException(400, f"Request is already {req.status.lower()}")
             
             req.status = RequestStatus.DECLINED
-            thread.is_locked = True
-            session.flush()
-            await system_message(session, thread.id, "Request declined. Thread locked.")
+            
+            # Get event details for notification
+            event = session.execute(select(Event).where(Event.id == req.event_id)).scalar_one_or_none()
+            event_title = event.title if event else "this event"
+            
+            # Find thread if exists
+            thread = session.execute(
+                select(Thread).where(Thread.event_id == req.event_id)
+            ).scalar_one_or_none()
+            
+            if thread:
+                thread.is_locked = True
+                session.flush()
+                await system_message(session, thread.id, "Request declined. Thread locked.")
+            
+            # Notify guest that their request was declined
+            await create_notification(
+                session,
+                user_id=req.guest_id,
+                notification_type=NotificationType.EVENT_JOIN_DECLINED,
+                title=f"Request declined for '{event_title}'",
+                body=f"Your request to join '{event_title}' was declined",
+                event_id=req.event_id,
+                request_id=req.id
+            )
+            
             session.commit()
-            return {"status": req.status, "thread_id": thread.id}
+            return {"status": req.status, "thread_id": thread.id if thread else None}
 
         else:
             raise HTTPException(400, "Invalid action. Must be 'accept' or 'decline'")
@@ -2096,6 +2280,21 @@ async def cancel_request(
                     # We should probably not delete participant yet if we want them to trigger a message?
                     # No, system message is sent by system (no sender needed).
                     await system_message(session, thread.id, f"{user_name} has left the event.")
+            
+            # Notify host that someone left
+            event = session.execute(select(Event).where(Event.id == req.event_id)).scalar_one_or_none()
+            if event:
+                await create_notification(
+                    session,
+                    user_id=req.host_id,
+                    notification_type=NotificationType.EVENT_LEFT,
+                    title=f"{user_name} left your event",
+                    body=f"{user_name} left '{event.title}'",
+                    event_id=req.event_id,
+                    request_id=req.id,
+                    thread_id=thread.id if thread else None,
+                    related_user_id=current_user.id
+                )
 
         req.status = RequestStatus.CANCELED
         session.commit()
@@ -2540,6 +2739,33 @@ async def send_message(
         )
         
         session.add(message)
+        session.flush()
+        
+        # Get event details for notification
+        event = session.execute(select(Event).where(Event.id == thread.event_id)).scalar_one_or_none()
+        event_title = event.title if event else "Event"
+        
+        # Get all participants except the sender
+        participants = session.execute(
+            select(ThreadParticipant)
+            .where(ThreadParticipant.thread_id == thread_id)
+            .where(ThreadParticipant.user_id != current_user.id)
+        ).scalars().all()
+        
+        # Create notifications for all other participants
+        for participant in participants:
+            await create_notification(
+                session,
+                user_id=participant.user_id,
+                notification_type=NotificationType.NEW_MESSAGE,
+                title=f"New message in '{event_title}'",
+                body=f"{current_user.display_name}: {payload.body[:100]}{'...' if len(payload.body) > 100 else ''}",
+                event_id=thread.event_id,
+                thread_id=thread_id,
+                related_user_id=current_user.id,
+                metadata={"message_id": message.id}
+            )
+        
         session.commit()
         
         # Broadcast via WebSocket
@@ -2739,6 +2965,159 @@ async def get_thread_details(
         "event": event_summary,
         "requests": requests_details
     }
+
+# ---------------------
+# Notification API Endpoints
+# ---------------------
+@app.get("/notifications", response_model=NotificationListOut)
+async def get_notifications(
+    limit: int = 50,
+    offset: int = 0,
+    unread_only: bool = False,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get notifications for the current user. Requires authentication."""
+    query = select(Notification).where(Notification.user_id == current_user.id)
+    
+    if unread_only:
+        query = query.where(Notification.is_read == False)
+    
+    query = query.order_by(Notification.created_at.desc()).limit(limit).offset(offset)
+    
+    notifications = session.execute(query).scalars().all()
+    
+    # Get unread count
+    unread_count = session.execute(
+        select(func.count(Notification.id))
+        .where(Notification.user_id == current_user.id, Notification.is_read == False)
+    ).scalar() or 0
+    
+    # Get total count
+    total_count = session.execute(
+        select(func.count(Notification.id))
+        .where(Notification.user_id == current_user.id)
+    ).scalar() or 0
+    
+    return {
+        "notifications": [
+            {
+                "id": n.id,
+                "user_id": n.user_id,
+                "type": n.type,
+                "title": n.title,
+                "body": n.body,
+                "is_read": n.is_read,
+                "created_at": n.created_at,
+                "event_id": n.event_id,
+                "thread_id": n.thread_id,
+                "request_id": n.request_id,
+                "related_user_id": n.related_user_id,
+                "metadata": n.extra_data
+            }
+            for n in notifications
+        ],
+        "unread_count": unread_count,
+        "total_count": total_count
+    }
+
+@app.get("/notifications/unread-count")
+async def get_unread_count(
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Get unread notification count for the current user. Requires authentication."""
+    count = session.execute(
+        select(func.count(Notification.id))
+        .where(Notification.user_id == current_user.id, Notification.is_read == False)
+    ).scalar() or 0
+    
+    return {"unread_count": count}
+
+@app.post("/notifications/mark-read")
+async def mark_notifications_read(
+    payload: NotificationMarkRead,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Mark notifications as read. Requires authentication."""
+    # Verify all notifications belong to the current user
+    notifications = session.execute(
+        select(Notification)
+        .where(
+            Notification.id.in_(payload.notification_ids),
+            Notification.user_id == current_user.id
+        )
+    ).scalars().all()
+    
+    for notification in notifications:
+        notification.is_read = True
+    
+    session.commit()
+    return {"message": f"Marked {len(notifications)} notification(s) as read"}
+
+@app.post("/notifications/{notification_id}/mark-read")
+async def mark_single_notification_read(
+    notification_id: str,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Mark a single notification as read. Requires authentication."""
+    notification = session.execute(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == current_user.id
+        )
+    ).scalar_one_or_none()
+    
+    if not notification:
+        raise HTTPException(404, "Notification not found")
+    
+    notification.is_read = True
+    session.commit()
+    return {"message": "Notification marked as read"}
+
+@app.delete("/notifications/{notification_id}")
+async def delete_notification(
+    notification_id: str,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Delete a notification. Requires authentication."""
+    notification = session.execute(
+        select(Notification).where(
+            Notification.id == notification_id,
+            Notification.user_id == current_user.id
+        )
+    ).scalar_one_or_none()
+    
+    if not notification:
+        raise HTTPException(404, "Notification not found")
+    
+    session.delete(notification)
+    session.commit()
+    return {"message": "Notification deleted"}
+
+@app.delete("/notifications")
+async def delete_all_notifications(
+    read_only: bool = False,
+    current_user: User = Depends(get_current_user),
+    session=Depends(get_session)
+):
+    """Delete all notifications (optionally only read ones). Requires authentication."""
+    query = select(Notification).where(Notification.user_id == current_user.id)
+    
+    if read_only:
+        query = query.where(Notification.is_read == True)
+    
+    notifications = session.execute(query).scalars().all()
+    count = len(notifications)
+    
+    for notification in notifications:
+        session.delete(notification)
+    
+    session.commit()
+    return {"message": f"Deleted {count} notification(s)"}
 
 # ---------------------
 # WebSocket Manager
