@@ -2120,6 +2120,10 @@ async def act_on_request(
                 
                 await system_message(session, thread.id, f"Welcome to the {event_title} event chat!")
             
+            # Get guest name for notifications and messages
+            guest = session.execute(select(User).where(User.id == req.guest_id)).scalar_one_or_none()
+            guest_name = guest.display_name if guest else "A participant"
+            
             # Add the accepted user to the group chat
             existing_participant = session.execute(
                 select(ThreadParticipant).where(
@@ -2131,10 +2135,6 @@ async def act_on_request(
             if not existing_participant:
                 guest_participant = ThreadParticipant(thread_id=thread.id, user_id=req.guest_id, role="guest")
                 session.add(guest_participant)
-                
-                # Get guest name for system message
-                guest = session.execute(select(User).where(User.id == req.guest_id)).scalar_one_or_none()
-                guest_name = guest.display_name if guest else "A participant"
                 await system_message(session, thread.id, f"{guest_name} has joined the event!")
             
             # Notify guest that their request was accepted
