@@ -2126,6 +2126,14 @@ async def act_on_request(
                 session.add(host_participant)
                 
                 await system_message(session, thread.id, f"Welcome to the {event_title} event chat!")
+            else:
+                # If thread exists but was locked (e.g., from a previous decline), unlock it
+                # Threads should only be locked when the event is canceled
+                if thread.is_locked:
+                    # Check if event is still active - only unlock if event is not canceled
+                    if event and event.status != EventStatus.CANCELED:
+                        thread.is_locked = False
+                        await system_message(session, thread.id, "Chat is now available.")
             
             # Get guest name for notifications and messages
             guest = session.execute(select(User).where(User.id == req.guest_id)).scalar_one_or_none()
@@ -2189,10 +2197,11 @@ async def act_on_request(
                 select(Thread).where(Thread.event_id == req.event_id)
             ).scalar_one_or_none()
             
-            if thread:
-                thread.is_locked = True
-                session.flush()
-                await system_message(session, thread.id, "Request declined. Thread locked.")
+            # Note: We don't lock the thread when a request is declined because:
+            # 1. The declined user is not a participant, so they can't chat anyway
+            # 2. Other participants should still be able to chat
+            # 3. If the user rejoins and gets accepted later, they should be able to chat
+            # Threads are only locked when the event itself is canceled
             
             # Notify guest that their request was declined
             await create_notification(
