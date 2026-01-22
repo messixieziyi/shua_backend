@@ -2094,10 +2094,17 @@ async def act_on_request(
             if req.status != RequestStatus.SUBMITTED:
                 raise HTTPException(400, f"Request is already {req.status.lower()}")
             
+            # Check if booking already exists (e.g., from auto-accept or race condition)
+            booking = session.execute(
+                select(Booking).where(Booking.request_id == req.id)
+            ).scalar_one_or_none()
+            
+            if not booking:
+                booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
+                session.add(booking)
+                session.flush()
+            
             req.status = RequestStatus.ACCEPTED
-            booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
-            session.add(booking)
-            session.flush()
             
             # Find or create the event group chat
             thread = session.execute(
