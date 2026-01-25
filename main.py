@@ -3471,8 +3471,10 @@ if __name__ == "__main__":
     import argparse, uvicorn
     p = argparse.ArgumentParser()
     p.add_argument("--test", action="store_true")
+    p.add_argument("--port", type=int, default=8000, help="Port to run the server on (default: 8000)")
     a = p.parse_args()
     if a.test:
         asyncio.run(_run_smoke_tests())
     else:
-        uvicorn.run("main:app", host="0.0.0.0", port=8002, reload=False)
+        port = int(os.getenv("PORT", a.port))
+        uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
