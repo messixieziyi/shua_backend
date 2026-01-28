@@ -1717,6 +1717,27 @@ async def cancel_event(
         if thread:
             thread.is_locked = True
             await system_message(session, thread.id, f"⚠️ Event has been canceled by the host.")
+        
+        # Get all participants (users with accepted requests for this event)
+        accepted_requests = session.execute(
+            select(Request)
+            .where(Request.event_id == event_id)
+            .where(Request.status == RequestStatus.ACCEPTED)
+        ).scalars().all()
+        
+        # Send cancellation notifications to all participants (excluding the host)
+        for req in accepted_requests:
+            if req.guest_id != current_user.id:  # Don't notify the host who canceled
+                await create_notification(
+                    session,
+                    user_id=req.guest_id,
+                    notification_type=NotificationType.EVENT_CANCELED,
+                    title=f"Event canceled: '{event.title}'",
+                    body=f"The event '{event.title}' has been canceled by the host",
+                    event_id=event_id,
+                    request_id=req.id,
+                    thread_id=thread.id if thread else None
+                )
             
         session.commit()
         
