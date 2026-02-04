@@ -92,9 +92,9 @@ def upload_image(
         except ValueError:
             return False, "Invalid data URL format."
         
-        mime_match = re.match(r'data:image/(jpeg|jpg|png|gif|webp)', header)
+        mime_match = re.match(r'data:image/(jpeg|jpg|png|gif|webp|heic|heif)', header)
         if not mime_match:
-            return False, "Unsupported image type. Only JPEG, PNG, GIF, and WebP are allowed."
+            return False, "Unsupported image type. Only JPEG, PNG, GIF, WebP, and HEIC are allowed."
         
         # Validate size
         try:

@@ -505,9 +505,9 @@ def validate_base64_image(image_data: str, max_size_mb: int = 5) -> tuple[bool, 
         header, data = image_data.split(',', 1)
         
         # Validate MIME type
-        mime_match = re.match(r'data:image/(jpeg|jpg|png|gif|webp)', header)
+        mime_match = re.match(r'data:image/(jpeg|jpg|png|gif|webp|heic|heif)', header)
         if not mime_match:
-            return False, "Unsupported image type. Only JPEG, PNG, GIF, and WebP are allowed."
+            return False, "Unsupported image type. Only JPEG, PNG, GIF, WebP, and HEIC are allowed."
         
         # Decode and check size
         try:
