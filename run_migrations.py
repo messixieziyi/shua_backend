@@ -157,6 +157,15 @@ def run_migrations():
                 """)
             migrations_run.append("event_likes table")
         
+        # Migration 5: Add level_requirement to events table
+        if not column_exists(cursor, 'events', 'level_requirement', db_type):
+            print("➕ Migration 5: Adding level_requirement column to events table...")
+            cursor.execute("""
+                ALTER TABLE events 
+                ADD COLUMN level_requirement VARCHAR(20)
+            """)
+            migrations_run.append("events.level_requirement")
+        
         # Commit all migrations
         conn.commit()
         

@@ -13,4 +13,4 @@ cmds = [
 cmds = []
 
 [start]
-cmd = ". /opt/venv/bin/activate && uvicorn main:app --host 0.0.0.0 --port $PORT"
+cmd = ". /opt/venv/bin/activate && python3 run_migrations.py && uvicorn main:app --host 0.0.0.0 --port $PORT"

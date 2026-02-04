@@ -188,6 +188,7 @@ class Event(Base):
     auto_accept: Mapped[Optional[bool]] = mapped_column(Boolean, default=False, nullable=True)  # Free to join if True
     status: Mapped[EventStatus] = mapped_column(SQLEnum(EventStatus), default=EventStatus.ACTIVE)
     cancellation_deadline_hours: Mapped[int] = mapped_column(BigInteger, default=24)
+    level_requirement: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # Stores generic level ID: "level_1" to "level_5"
 
 class Request(Base):
     __tablename__ = "requests"
@@ -403,6 +404,7 @@ class EventUpdate(BaseModel):
     image_3: Optional[str] = None  # Base64 encoded image
     tag_ids: Optional[list[str]] = None  # List of tag IDs
     cancellation_deadline_hours: Optional[int] = None
+    level_requirement: Optional[str] = None  # Level ID: "level_1" to "level_5"
 
 # ---------------------
 # Authentication Schemas
@@ -1162,9 +1164,10 @@ async def list_events(
     session=Depends(get_session), 
     tag_filter: Optional[str] = None,
     activity_filter: Optional[str] = None,
+    level_filter: Optional[str] = None,
     current_user: Optional[User] = Depends(get_current_user_optional)
 ):
-    """Get all events, optionally filtered by tag or activity type. Public endpoint - no authentication required."""
+    """Get all events, optionally filtered by tag, activity type, or level. Public endpoint - no authentication required."""
     try:
         query = select(Event)
         
@@ -1175,6 +1178,10 @@ async def list_events(
         if activity_filter:
             # Filter events by activity type (sport name)
             query = query.where(Event.activity_type.ilike(f"%{activity_filter}%"))
+        
+        if level_filter:
+            # Filter events by level requirement (level_1 to level_5)
+            query = query.where(Event.level_requirement == level_filter)
         
         events = session.execute(query).scalars().all()
     except Exception as e:
@@ -1241,7 +1248,8 @@ async def list_events(
             "host_name": creator.display_name if creator else "Unknown Host",
             "available_spots": event.capacity,
             "occupied_spots": 0,  # TODO: Calculate from bookings
-            "level_needed": "All Levels",  # TODO: Add to Event model if needed
+            "level_needed": "All Levels",  # Deprecated: use level_requirement instead
+            "level_requirement": event.level_requirement,
             "auto_accept": event.auto_accept if event.auto_accept is not None else False,
             "status": event.status.value if event.status else "ACTIVE",
             "cancellation_deadline_hours": event.cancellation_deadline_hours,
@@ -1263,8 +1271,6 @@ async def list_events(
             ]
         })
     
-    return result
-
     return result
 
 @app.get("/events/liked")
@@ -1444,7 +1450,8 @@ async def get_event_by_id(
             "host_name": creator.display_name if creator else "Unknown Host",
             "available_spots": event.capacity,
             "occupied_spots": 0,  # TODO: Calculate from bookings
-            "level_needed": "All Levels",  # TODO: Add to Event model if needed
+            "level_needed": "All Levels",  # Deprecated: use level_requirement instead
+            "level_requirement": event.level_requirement,
             "auto_accept": event.auto_accept if event.auto_accept is not None else False,
             "status": event.status.value if event.status else "ACTIVE",
             "cancellation_deadline_hours": event.cancellation_deadline_hours,
@@ -1486,6 +1493,7 @@ async def create_event(
         location = event_data.get("location")
         address = event_data.get("address")
         cancellation_deadline_hours = event_data.get("cancellation_deadline_hours", 24)
+        level_requirement = event_data.get("level_requirement")  # Optional: "level_1" to "level_5"
         # Force use current user as creator for security
         created_by = current_user.id
         
@@ -1511,7 +1519,8 @@ async def create_event(
             location=location,
             address=address,
             created_by=created_by,
-            cancellation_deadline_hours=cancellation_deadline_hours
+            cancellation_deadline_hours=cancellation_deadline_hours,
+            level_requirement=level_requirement
         )
         session.add(new_event)
         session.flush()  # Flush to get the event ID
@@ -1546,6 +1555,7 @@ async def create_event(
             "created_by": new_event.created_by,
             "status": new_event.status,
             "cancellation_deadline_hours": new_event.cancellation_deadline_hours,
+            "level_requirement": new_event.level_requirement,
             "images": {
                 "image_1": new_event.image_1,
                 "image_2": new_event.image_2,
@@ -1596,6 +1606,8 @@ async def update_event(
             event.location = event_data.location
         if event_data.address is not None:
             event.address = event_data.address
+        if event_data.level_requirement is not None:
+            event.level_requirement = event_data.level_requirement
         
         # Update datetime if provided
         if event_data.starts_at is not None:
@@ -1664,6 +1676,7 @@ async def update_event(
                 "location": event.location,
                 "address": event.address,
                 "created_by": event.created_by,
+                "level_requirement": event.level_requirement,
                 "images": {
                     "image_1": event.image_1,
                     "image_2": event.image_2,
