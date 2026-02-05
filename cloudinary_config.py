@@ -92,41 +92,9 @@ def upload_image(
         except ValueError:
             return False, "Invalid data URL format."
         
-        # #region agent log
-        import json
-        log_entry = {
-            "location": "cloudinary_config.py:95",
-            "message": "Validating MIME type",
-            "data": {"header": header, "headerLength": len(header)},
-            "timestamp": int(__import__('time').time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "C"
-        }
-        try:
-            with open('/Users/xieziyi/Documents/Shua Project/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps(log_entry) + '\n')
-        except: pass
-        # #endregion
-        
         # Match data:image/jpeg, data:image/jpeg;base64, etc.
         # Allow optional parameters after the MIME type (like ;base64)
         mime_match = re.match(r'data:image/(jpeg|jpg|png|gif|webp)(?:[;,]|$)', header)
-        # #region agent log
-        log_entry = {
-            "location": "cloudinary_config.py:96",
-            "message": "MIME type regex match result",
-            "data": {"header": header, "matchFound": bool(mime_match), "matchedGroup": mime_match.group(1) if mime_match else None},
-            "timestamp": int(__import__('time').time() * 1000),
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "C"
-        }
-        try:
-            with open('/Users/xieziyi/Documents/Shua Project/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps(log_entry) + '\n')
-        except: pass
-        # #endregion
         if not mime_match:
             return False, "Unsupported image type. Only JPEG, PNG, GIF, and WebP are allowed."
         
