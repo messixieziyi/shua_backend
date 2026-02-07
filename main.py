@@ -702,10 +702,12 @@ async def lifespan(app: FastAPI):
 # ---------------------
 app = FastAPI(title="Meetup Chat & Booking API", version="0.4.0", lifespan=lifespan)
 # CORS configuration
-# Allow Vercel and localhost origins
-# Using regex pattern to match Vercel domains and localhost
+# Allow Vercel and localhost origins, plus optional FRONTEND_URL overrides
+frontend_urls_env = os.getenv("FRONTEND_URL", "")
+allowed_origins = [url.strip() for url in frontend_urls_env.split(",") if url.strip()]
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=allowed_origins,
     allow_origin_regex=r"https?://(localhost:\d+|.*\.vercel\.app)",
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
@@ -720,9 +722,11 @@ app.add_middleware(
 async def register(user_data: UserRegister, session=Depends(get_session)):
     """Register a new user."""
     try:
+        normalized_email = user_data.email.strip().lower()
+
         # Check if user with email already exists
         existing_user = session.execute(
-            select(User).where(User.email == user_data.email)
+            select(User).where(func.lower(User.email) == normalized_email)
         ).scalar_one_or_none()
         
         if existing_user:
@@ -734,7 +738,7 @@ async def register(user_data: UserRegister, session=Depends(get_session)):
         # Create new user
         hashed_password = get_password_hash(user_data.password)
         new_user = User(
-            email=user_data.email,
+            email=normalized_email,
             display_name=user_data.display_name,
             hashed_password=hashed_password,
             first_name=user_data.first_name,
@@ -768,9 +772,11 @@ async def register(user_data: UserRegister, session=Depends(get_session)):
 async def login(credentials: UserLogin, session=Depends(get_session)):
     """Login with email and password."""
     try:
+        normalized_email = credentials.email.strip().lower()
+
         # Find user by email
         user = session.execute(
-            select(User).where(User.email == credentials.email)
+            select(User).where(func.lower(User.email) == normalized_email)
         ).scalar_one_or_none()
         
         if not user or not verify_password(credentials.password, user.hashed_password):
