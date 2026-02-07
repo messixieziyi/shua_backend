@@ -686,6 +686,19 @@ async def lifespan(app: FastAPI):
         # Create tables
         await run_in_threadpool(Base.metadata.create_all, bind=engine)
         print("✅ Database tables created successfully")
+
+        # Best-effort guardrail: enforce case-insensitive uniqueness on email
+        try:
+            def _ensure_email_unique_index() -> None:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text("CREATE UNIQUE INDEX IF NOT EXISTS uix_users_email_lower ON users (lower(email))")
+                    )
+
+            await run_in_threadpool(_ensure_email_unique_index)
+            print("✅ Email uniqueness index ensured")
+        except Exception as e:
+            print(f"⚠️  Could not create email uniqueness index: {e}")
         
     except Exception as e:
         print(f"⚠️  Database connection failed during startup: {e}")
@@ -785,14 +798,14 @@ async def login(credentials: UserLogin, session=Depends(get_session)):
                 detail="Incorrect email or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        if len(users) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Multiple accounts share this email. Contact support to resolve.",
+            )
 
-        matched_user = None
-        for candidate in users:
-            if verify_password(credentials.password, candidate.hashed_password):
-                matched_user = candidate
-                break
-
-        if not matched_user:
+        user = users[0]
+        if not verify_password(credentials.password, user.hashed_password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",
@@ -800,14 +813,14 @@ async def login(credentials: UserLogin, session=Depends(get_session)):
             )
         
         # Create access token
-        access_token = create_access_token(data={"sub": matched_user.id})
+        access_token = create_access_token(data={"sub": user.id})
         
         return Token(
             access_token=access_token,
             token_type="bearer",
-            user_id=matched_user.id,
-            display_name=matched_user.display_name,
-            email=matched_user.email
+            user_id=user.id,
+            display_name=user.display_name,
+            email=user.email
         )
     except HTTPException:
         raise
