@@ -775,11 +775,24 @@ async def login(credentials: UserLogin, session=Depends(get_session)):
         normalized_email = credentials.email.strip().lower()
 
         # Find user by email
-        user = session.execute(
+        users = session.execute(
             select(User).where(func.lower(User.email) == normalized_email)
-        ).scalar_one_or_none()
-        
-        if not user or not verify_password(credentials.password, user.hashed_password):
+        ).scalars().all()
+
+        if not users:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        matched_user = None
+        for candidate in users:
+            if verify_password(credentials.password, candidate.hashed_password):
+                matched_user = candidate
+                break
+
+        if not matched_user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Incorrect email or password",
@@ -787,14 +800,14 @@ async def login(credentials: UserLogin, session=Depends(get_session)):
             )
         
         # Create access token
-        access_token = create_access_token(data={"sub": user.id})
+        access_token = create_access_token(data={"sub": matched_user.id})
         
         return Token(
             access_token=access_token,
             token_type="bearer",
-            user_id=user.id,
-            display_name=user.display_name,
-            email=user.email
+            user_id=matched_user.id,
+            display_name=matched_user.display_name,
+            email=matched_user.email
         )
     except HTTPException:
         raise
