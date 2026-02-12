@@ -40,7 +40,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, EmailStr
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, Enum as SQLEnum, ForeignKey, String, Text, UniqueConstraint, func, select, create_engine, text, delete, JSON, Date
+    BigInteger, Boolean, DateTime, Enum as SQLEnum, Float, ForeignKey, String, Text, UniqueConstraint, func, select, create_engine, text, delete, JSON, Date
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.exc import IntegrityError
@@ -54,6 +54,9 @@ from datetime import timedelta
 
 # Cloudinary imports
 from cloudinary_config import validate_and_upload_image, delete_image, is_cloudinary_configured
+
+# HTTP client for external APIs
+import httpx
 
 # ---------------------
 # Database
@@ -180,6 +183,9 @@ class Event(Base):
     activity_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     location: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     address: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    formatted_address: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_by: Mapped[str] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     image_1: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Base64 encoded image
@@ -398,6 +404,9 @@ class EventUpdate(BaseModel):
     activity_type: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    formatted_address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     image_1: Optional[str] = None  # Base64 encoded image
     image_2: Optional[str] = None  # Base64 encoded image
     image_3: Optional[str] = None  # Base64 encoded image
@@ -729,6 +738,278 @@ app.add_middleware(
 )
 
 # ---------------------
+# Radar API Configuration
+# ---------------------
+RADAR_API_KEY = os.getenv("RADAR_API_KEY", "")
+RADAR_BASE_URL = "https://api.radar.io/v1"
+
+async def radar_autocomplete(query: str, near: str = None, limit: int = 5, country: str = None, layers: str = None):
+    """Call Radar's address autocomplete API for partial address suggestions."""
+    if not RADAR_API_KEY:
+        raise HTTPException(status_code=500, detail="Radar API key not configured")
+    
+    params = {"query": query, "limit": limit}
+    if near:
+        params["near"] = near
+    if country:
+        params["country"] = country
+    if layers:
+        params["layers"] = layers
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            f"{RADAR_BASE_URL}/search/autocomplete",
+            params=params,
+            headers={"Authorization": RADAR_API_KEY}
+        )
+        response.raise_for_status()
+        return response.json()
+
+async def radar_forward_geocode(query: str, country: str = None):
+    """Call Radar's forward geocoding API for complete address resolution."""
+    if not RADAR_API_KEY:
+        raise HTTPException(status_code=500, detail="Radar API key not configured")
+    
+    params = {"query": query}
+    if country:
+        params["country"] = country
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            f"{RADAR_BASE_URL}/geocode/forward",
+            params=params,
+            headers={"Authorization": RADAR_API_KEY}
+        )
+        response.raise_for_status()
+        return response.json()
+
+async def radar_reverse_geocode(latitude: float, longitude: float):
+    """Call Radar's reverse geocoding API to get address from coordinates."""
+    if not RADAR_API_KEY:
+        raise HTTPException(status_code=500, detail="Radar API key not configured")
+    
+    params = {"coordinates": f"{latitude},{longitude}"}
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            f"{RADAR_BASE_URL}/geocode/reverse",
+            params=params,
+            headers={"Authorization": RADAR_API_KEY}
+        )
+        response.raise_for_status()
+        return response.json()
+
+async def radar_validate_address(address: dict):
+    """Call Radar's address validation API to verify and standardize an address."""
+    if not RADAR_API_KEY:
+        raise HTTPException(status_code=500, detail="Radar API key not configured")
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            f"{RADAR_BASE_URL}/addresses/validate",
+            params=address,
+            headers={"Authorization": RADAR_API_KEY}
+        )
+        response.raise_for_status()
+        return response.json()
+
+# ---------------------
+# Address / Location Endpoints (Radar)
+# ---------------------
+@app.get("/api/address/autocomplete")
+async def autocomplete_address(
+    query: str,
+    near: Optional[str] = None,
+    limit: int = 5,
+    country: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Autocomplete partial addresses using Radar API.
+    
+    - **query**: Partial address string (e.g. "123 Main")
+    - **near**: Optional lat,lng to bias results (e.g. "40.7,-74.0")
+    - **limit**: Max number of suggestions (default 5, max 10)
+    - **country**: Optional country code to filter (e.g. "US")
+    
+    Returns a list of address suggestions with coordinates.
+    """
+    try:
+        limit = min(limit, 10)
+        data = await radar_autocomplete(query=query, near=near, limit=limit, country=country)
+        
+        addresses = data.get("addresses", [])
+        suggestions = []
+        for addr in addresses:
+            suggestions.append({
+                "formattedAddress": addr.get("formattedAddress"),
+                "addressLabel": addr.get("addressLabel"),
+                "placeLabel": addr.get("placeLabel"),
+                "city": addr.get("city"),
+                "state": addr.get("state"),
+                "stateCode": addr.get("stateCode"),
+                "postalCode": addr.get("postalCode"),
+                "country": addr.get("country"),
+                "countryCode": addr.get("countryCode"),
+                "latitude": addr.get("latitude"),
+                "longitude": addr.get("longitude"),
+                "layer": addr.get("layer"),
+            })
+        
+        return {"suggestions": suggestions}
+    
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Radar API error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to reach Radar API: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Address autocomplete failed: {str(e)}")
+
+@app.get("/api/address/geocode")
+async def geocode_address(
+    query: str,
+    country: Optional[str] = None,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Forward geocode a complete address using Radar API.
+    
+    - **query**: Full address string to geocode
+    - **country**: Optional country code filter
+    
+    Returns geocoded address with lat/lng coordinates.
+    """
+    try:
+        data = await radar_forward_geocode(query=query, country=country)
+        
+        addresses = data.get("addresses", [])
+        if not addresses:
+            return {"result": None, "message": "No results found"}
+        
+        addr = addresses[0]
+        return {
+            "result": {
+                "formattedAddress": addr.get("formattedAddress"),
+                "addressLabel": addr.get("addressLabel"),
+                "city": addr.get("city"),
+                "state": addr.get("state"),
+                "stateCode": addr.get("stateCode"),
+                "postalCode": addr.get("postalCode"),
+                "country": addr.get("country"),
+                "countryCode": addr.get("countryCode"),
+                "latitude": addr.get("latitude"),
+                "longitude": addr.get("longitude"),
+                "confidence": addr.get("confidence"),
+            }
+        }
+    
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Radar API error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to reach Radar API: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Geocoding failed: {str(e)}")
+
+@app.get("/api/address/reverse-geocode")
+async def reverse_geocode(
+    latitude: float,
+    longitude: float,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Reverse geocode coordinates to an address using Radar API.
+    
+    - **latitude**: Latitude coordinate
+    - **longitude**: Longitude coordinate
+    
+    Returns the address at the given coordinates.
+    """
+    try:
+        data = await radar_reverse_geocode(latitude=latitude, longitude=longitude)
+        
+        addresses = data.get("addresses", [])
+        if not addresses:
+            return {"result": None, "message": "No address found at coordinates"}
+        
+        addr = addresses[0]
+        return {
+            "result": {
+                "formattedAddress": addr.get("formattedAddress"),
+                "addressLabel": addr.get("addressLabel"),
+                "city": addr.get("city"),
+                "state": addr.get("state"),
+                "stateCode": addr.get("stateCode"),
+                "postalCode": addr.get("postalCode"),
+                "country": addr.get("country"),
+                "countryCode": addr.get("countryCode"),
+                "latitude": addr.get("latitude"),
+                "longitude": addr.get("longitude"),
+            }
+        }
+    
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Radar API error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to reach Radar API: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Reverse geocoding failed: {str(e)}")
+
+@app.get("/api/address/validate")
+async def validate_address_endpoint(
+    addressLine1: str,
+    city: Optional[str] = None,
+    stateCode: Optional[str] = None,
+    postalCode: Optional[str] = None,
+    countryCode: Optional[str] = "US",
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Validate a structured address using Radar API.
+    
+    - **addressLine1**: Street address (e.g. "123 Main St")
+    - **city**: City name
+    - **stateCode**: State/province code (e.g. "CA")
+    - **postalCode**: Postal/zip code
+    - **countryCode**: Country code (default "US")
+    
+    Returns validation result with corrected/standardized address.
+    """
+    try:
+        params = {"addressLine1": addressLine1, "countryCode": countryCode}
+        if city:
+            params["city"] = city
+        if stateCode:
+            params["stateCode"] = stateCode
+        if postalCode:
+            params["postalCode"] = postalCode
+        
+        data = await radar_validate_address(params)
+        
+        result = data.get("address", {})
+        return {
+            "result": {
+                "formattedAddress": result.get("formattedAddress"),
+                "addressLabel": result.get("addressLabel"),
+                "city": result.get("city"),
+                "state": result.get("state"),
+                "stateCode": result.get("stateCode"),
+                "postalCode": result.get("postalCode"),
+                "country": result.get("country"),
+                "countryCode": result.get("countryCode"),
+                "latitude": result.get("latitude"),
+                "longitude": result.get("longitude"),
+                "verificationStatus": result.get("verificationStatus"),
+            }
+        }
+    
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Radar API error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to reach Radar API: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Address validation failed: {str(e)}")
+
+# ---------------------
 # Authentication Endpoints
 # ---------------------
 @app.post("/auth/register", response_model=Token)
@@ -954,6 +1235,9 @@ async def get_user_hosting_events(
             "activity_type": event.activity_type,
             "location": event.location,
             "address": event.address,
+            "formatted_address": event.formatted_address,
+            "latitude": event.latitude,
+            "longitude": event.longitude,
             "created_by": event.created_by,
             "host_name": user.display_name,
             "available_spots": event.capacity - occupied_count,
@@ -1270,6 +1554,9 @@ async def list_events(
             "sport_type": event.activity_type,  # For backward compatibility
             "location": event.location,
             "address": event.address,
+            "formatted_address": event.formatted_address,
+            "latitude": event.latitude,
+            "longitude": event.longitude,
             "created_by": event.created_by,
             "host_name": creator.display_name if creator else "Unknown Host",
             "available_spots": event.capacity,
@@ -1337,6 +1624,9 @@ async def get_liked_events(
                 "sport_type": event.activity_type,
                 "location": event.location,
                 "address": event.address,
+                "formatted_address": event.formatted_address,
+                "latitude": event.latitude,
+                "longitude": event.longitude,
                 "created_by": event.created_by,
                 "host_name": creator.display_name if creator else "Unknown Host",
                 "available_spots": event.capacity,
@@ -1400,6 +1690,9 @@ async def get_my_events(
                 "sport_type": event.activity_type,  # For backward compatibility
                 "location": event.location,
                 "address": event.address,
+                "formatted_address": event.formatted_address,
+                "latitude": event.latitude,
+                "longitude": event.longitude,
                 "created_by": event.created_by,
                 "host_name": current_user.display_name,  # Current user is the host
                 "available_spots": event.capacity,
@@ -1473,6 +1766,9 @@ async def get_event_by_id(
             "sport_type": event.activity_type,  # For backward compatibility
             "location": event.location,
             "address": event.address,
+            "formatted_address": event.formatted_address,
+            "latitude": event.latitude,
+            "longitude": event.longitude,
             "created_by": event.created_by,
             "host_name": creator.display_name if creator else "Unknown Host",
             "available_spots": event.capacity,
@@ -1518,6 +1814,9 @@ async def create_event(
         activity_type = event_data.get("activity_type")
         location = event_data.get("location")
         address = event_data.get("address")
+        formatted_address = event_data.get("formatted_address")
+        latitude = event_data.get("latitude")
+        longitude = event_data.get("longitude")
         cancellation_deadline_hours = event_data.get("cancellation_deadline_hours", 24)
         # Force use current user as creator for security
         created_by = current_user.id
@@ -1543,6 +1842,9 @@ async def create_event(
             activity_type=activity_type,
             location=location,
             address=address,
+            formatted_address=formatted_address,
+            latitude=latitude,
+            longitude=longitude,
             created_by=created_by,
             cancellation_deadline_hours=cancellation_deadline_hours
         )
@@ -1576,6 +1878,9 @@ async def create_event(
             "activity_type": new_event.activity_type,
             "location": new_event.location,
             "address": new_event.address,
+            "formatted_address": new_event.formatted_address,
+            "latitude": new_event.latitude,
+            "longitude": new_event.longitude,
             "created_by": new_event.created_by,
             "status": new_event.status,
             "cancellation_deadline_hours": new_event.cancellation_deadline_hours,
@@ -1629,6 +1934,12 @@ async def update_event(
             event.location = event_data.location
         if event_data.address is not None:
             event.address = event_data.address
+        if event_data.formatted_address is not None:
+            event.formatted_address = event_data.formatted_address
+        if event_data.latitude is not None:
+            event.latitude = event_data.latitude
+        if event_data.longitude is not None:
+            event.longitude = event_data.longitude
         
         # Update datetime if provided
         if event_data.starts_at is not None:
@@ -1696,6 +2007,9 @@ async def update_event(
                 "activity_type": event.activity_type,
                 "location": event.location,
                 "address": event.address,
+                "formatted_address": event.formatted_address,
+                "latitude": event.latitude,
+                "longitude": event.longitude,
                 "created_by": event.created_by,
                 "images": {
                     "image_1": event.image_1,
@@ -2554,6 +2868,9 @@ class EventSummaryOut(BaseModel):
     description: Optional[str]
     starts_at: str
     location: Optional[str]
+    formatted_address: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     activity_type: Optional[str]
 
 class LastMessageOut(BaseModel):
@@ -2633,6 +2950,9 @@ async def get_user_threads(
                 description=event.description,
                 starts_at=event.starts_at.isoformat(),
                 location=event.location,
+                formatted_address=event.formatted_address,
+                latitude=event.latitude,
+                longitude=event.longitude,
                 activity_type=event.activity_type
             )
         
@@ -2976,6 +3296,9 @@ async def get_thread_details(
             "starts_at": event.starts_at.isoformat(),
             "location": event.location,
             "address": event.address,
+            "formatted_address": event.formatted_address,
+            "latitude": event.latitude,
+            "longitude": event.longitude,
             "activity_type": event.activity_type,
             "capacity": event.capacity,
             "created_by": event.created_by,

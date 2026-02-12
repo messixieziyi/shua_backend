@@ -130,6 +130,22 @@ def run_migrations():
             """)
             table_exists = cursor.fetchone() is not None
 
+        # Migration 5: Add location/geocoding fields to events table (Radar API)
+        location_fields = [
+            ('formatted_address', 'VARCHAR(500)'),
+            ('latitude', 'DOUBLE PRECISION' if db_type == 'postgresql' else 'REAL'),
+            ('longitude', 'DOUBLE PRECISION' if db_type == 'postgresql' else 'REAL'),
+        ]
+        
+        for field_name, field_type in location_fields:
+            if not column_exists(cursor, 'events', field_name, db_type):
+                print(f"➕ Migration 5: Adding {field_name} column to events table...")
+                cursor.execute(f"""
+                    ALTER TABLE events 
+                    ADD COLUMN {field_name} {field_type}
+                """)
+                migrations_run.append(f"events.{field_name}")
+        
         if not table_exists:
             print("➕ Migration 4: Creating event_likes table...")
             if db_type == 'sqlite':
