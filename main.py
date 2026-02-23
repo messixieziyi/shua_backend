@@ -813,6 +813,34 @@ async def radar_validate_address(address: dict):
         response.raise_for_status()
         return response.json()
 
+
+async def radar_search_places(
+    near: str,
+    categories: Optional[str] = None,
+    chains: Optional[str] = None,
+    limit: int = 20,
+    radius: int = 10000,
+):
+    """Call Radar's places search API: places near a location, filtered by category or chain."""
+    if not RADAR_API_KEY:
+        raise HTTPException(status_code=500, detail="Radar API key not configured")
+    if not categories and not chains:
+        raise ValueError("Either categories or chains must be provided")
+    params = {"near": near, "limit": min(limit, 100), "radius": min(max(radius, 1), 10000)}
+    if categories:
+        params["categories"] = categories
+    if chains:
+        params["chains"] = chains
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(
+            f"{RADAR_BASE_URL}/search/places",
+            params=params,
+            headers={"Authorization": RADAR_API_KEY},
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 # ---------------------
 # Address / Location Endpoints (Radar)
 # ---------------------
@@ -822,21 +850,23 @@ async def autocomplete_address(
     near: Optional[str] = None,
     limit: int = 5,
     country: Optional[str] = None,
+    layers: Optional[str] = None,
     current_user: User = Depends(get_current_user)
 ):
     """
-    Autocomplete partial addresses using Radar API.
+    Autocomplete partial addresses or search places using Radar API.
     
-    - **query**: Partial address string (e.g. "123 Main")
-    - **near**: Optional lat,lng to bias results (e.g. "40.7,-74.0")
-    - **limit**: Max number of suggestions (default 5, max 10)
+    - **query**: Partial address or place search (e.g. "123 Main" or "badminton")
+    - **near**: Optional lat,lng to bias results (e.g. "40.7,-74.0"). Use for "places near me".
+    - **limit**: Max number of suggestions (default 5, max 20)
     - **country**: Optional country code to filter (e.g. "US")
+    - **layers**: Optional layer filter; use "place" for place/POI search (e.g. badminton courts).
     
-    Returns a list of address suggestions with coordinates.
+    Returns a list of address/place suggestions with coordinates.
     """
     try:
-        limit = min(limit, 10)
-        data = await radar_autocomplete(query=query, near=near, limit=limit, country=country)
+        limit = min(limit, 20)
+        data = await radar_autocomplete(query=query, near=near, limit=limit, country=country, layers=layers)
         
         addresses = data.get("addresses", [])
         suggestions = []
@@ -864,6 +894,80 @@ async def autocomplete_address(
         raise HTTPException(status_code=502, detail=f"Failed to reach Radar API: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Address autocomplete failed: {str(e)}")
+
+
+@app.get("/api/address/places")
+async def search_places(
+    near: str,
+    categories: Optional[str] = None,
+    chains: Optional[str] = None,
+    limit: int = 20,
+    radius: int = 10000,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Search for places near a location using Radar Places Search API.
+    Filter by category (e.g. sports-recreation, gym) or chain (e.g. starbucks).
+    - **near**: Required. lat,lng (e.g. "40.7,-74.0")
+    - **categories**: Comma-separated category slugs (e.g. "sports-recreation,gym")
+    - **chains**: Comma-separated chain slugs. If omitted, categories must be provided.
+    - **limit**: Max results (default 20, max 100)
+    - **radius**: Search radius in meters (default 10000)
+    """
+    if not categories and not chains:
+        raise HTTPException(
+            status_code=400,
+            detail="Either 'categories' or 'chains' query parameter is required",
+        )
+    try:
+        data = await radar_search_places(
+            near=near,
+            categories=categories,
+            chains=chains,
+            limit=limit,
+            radius=radius,
+        )
+        places = data.get("places", [])
+        # Build list of (name, lat, lng) for places with valid coordinates
+        place_items = []
+        for p in places:
+            coords = (p.get("location") or {}).get("coordinates") or []
+            lng = coords[0] if len(coords) > 0 else None
+            lat = coords[1] if len(coords) > 1 else None
+            if lat is None or lng is None:
+                continue
+            name = p.get("name") or "Unknown place"
+            place_items.append((name, lat, lng))
+
+        # Reverse-geocode each place in parallel to get detail address for dropdown
+        async def one_place(name: str, lat: float, lng: float) -> dict:
+            try:
+                rev = await radar_reverse_geocode(latitude=lat, longitude=lng)
+                addrs = rev.get("addresses") or []
+                formatted = addrs[0].get("formattedAddress") if addrs else name
+            except Exception:
+                formatted = name
+            return {
+                "formattedAddress": formatted,
+                "placeLabel": name,
+                "addressLabel": name,
+                "latitude": lat,
+                "longitude": lng,
+            }
+
+        suggestions = await asyncio.gather(
+            *[one_place(name, lat, lng) for name, lat, lng in place_items]
+        )
+        return {"suggestions": list(suggestions)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Radar API error: {e.response.text}")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"Failed to reach Radar API: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Places search failed: {str(e)}")
+
 
 @app.get("/api/address/geocode")
 async def geocode_address(
