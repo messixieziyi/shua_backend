@@ -724,13 +724,14 @@ async def lifespan(app: FastAPI):
 # ---------------------
 app = FastAPI(title="Meetup Chat & Booking API", version="0.4.0", lifespan=lifespan)
 # CORS configuration
-# Allow Vercel and localhost origins, plus optional FRONTEND_URL overrides
+# Allow Vercel, localhost, shua-ai.com, plus optional FRONTEND_URL overrides
 frontend_urls_env = os.getenv("FRONTEND_URL", "")
 allowed_origins = [url.strip() for url in frontend_urls_env.split(",") if url.strip()]
+# Regex: localhost, *.vercel.app, shua-ai.com (and www)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https?://(localhost:\d+|.*\.vercel\.app)",
+    allow_origin_regex=r"https?://(localhost:\d+|.*\.vercel\.app|(www\.)?shua-ai\.com)",
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
     allow_credentials=True,
