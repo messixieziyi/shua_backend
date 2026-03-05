@@ -2139,6 +2139,7 @@ async def update_event(
         session.rollback()
         raise HTTPException(status_code=500, detail=f"Failed to update event: {str(e)}")
 
+@app.post("/events/{event_id}/cancel")
 async def cancel_event(
     event_id: str,
     current_user: User = Depends(get_current_user),
