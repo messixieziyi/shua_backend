@@ -1324,11 +1324,13 @@ async def get_user_hosting_events(
             select(Tag).join(EventTag).where(EventTag.event_id == event.id)
         ).scalars().all()
         
-        # Get occupied spots count
+        # Get occupied spots count (Booking links to Event via Request)
         occupied_count = session.execute(
             select(func.count(Booking.id))
-            .where(Booking.event_id == event.id)
-            .where(Booking.status == "CONFIRMED")
+            .select_from(Booking)
+            .join(Request, Booking.request_id == Request.id)
+            .where(Request.event_id == event.id)
+            .where(Booking.status == BookingStatus.CONFIRMED)
         ).scalar() or 0
         
         result.append({
@@ -1863,10 +1865,13 @@ async def get_event_by_id(
             ).scalar_one_or_none() is not None
 
         # Get occupied spots count (confirmed bookings = joined players)
+        # Booking has no event_id; link via Request
         occupied_count = session.execute(
             select(func.count(Booking.id))
-            .where(Booking.event_id == event.id)
-            .where(Booking.status == "CONFIRMED")
+            .select_from(Booking)
+            .join(Request, Booking.request_id == Request.id)
+            .where(Request.event_id == event.id)
+            .where(Booking.status == BookingStatus.CONFIRMED)
         ).scalar() or 0
 
         return {
