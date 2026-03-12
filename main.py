@@ -1862,6 +1862,13 @@ async def get_event_by_id(
                 )
             ).scalar_one_or_none() is not None
 
+        # Get occupied spots count (confirmed bookings = joined players)
+        occupied_count = session.execute(
+            select(func.count(Booking.id))
+            .where(Booking.event_id == event.id)
+            .where(Booking.status == "CONFIRMED")
+        ).scalar() or 0
+
         return {
             "id": event.id,
             "title": event.title,
@@ -1879,8 +1886,8 @@ async def get_event_by_id(
             "created_by": event.created_by,
             "host_name": creator.display_name if creator else "Unknown Host",
             "host_profile_picture": creator.profile_picture if creator else None,
-            "available_spots": event.capacity,
-            "occupied_spots": 0,  # TODO: Calculate from bookings
+            "available_spots": event.capacity - occupied_count,
+            "occupied_spots": occupied_count,
             "level_needed": "All Levels",  # TODO: Add to Event model if needed
             "auto_accept": event.auto_accept if event.auto_accept is not None else False,
             "status": event.status.value if event.status else "ACTIVE",
