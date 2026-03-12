@@ -1324,14 +1324,15 @@ async def get_user_hosting_events(
             select(Tag).join(EventTag).where(EventTag.event_id == event.id)
         ).scalars().all()
         
-        # Get occupied spots count (Booking links to Event via Request)
-        occupied_count = session.execute(
+        # Get occupied spots: host (1) + confirmed guest bookings
+        guest_count = session.execute(
             select(func.count(Booking.id))
             .select_from(Booking)
             .join(Request, Booking.request_id == Request.id)
             .where(Request.event_id == event.id)
             .where(Booking.status == BookingStatus.CONFIRMED)
         ).scalar() or 0
+        occupied_count = 1 + guest_count  # host counts as one player
         
         result.append({
             "id": event.id,
@@ -1651,6 +1652,16 @@ async def list_events(
                 )
             ).scalar_one_or_none() is not None
         
+        # Occupied spots: host (1) + confirmed guest bookings
+        guest_count = session.execute(
+            select(func.count(Booking.id))
+            .select_from(Booking)
+            .join(Request, Booking.request_id == Request.id)
+            .where(Request.event_id == event.id)
+            .where(Booking.status == BookingStatus.CONFIRMED)
+        ).scalar() or 0
+        occupied_count = 1 + guest_count
+        
         result.append({
             "id": event.id,
             "title": event.title,
@@ -1668,8 +1679,8 @@ async def list_events(
             "created_by": event.created_by,
             "host_name": creator.display_name if creator else "Unknown Host",
             "host_profile_picture": creator.profile_picture if creator else None,
-            "available_spots": event.capacity,
-            "occupied_spots": 0,  # TODO: Calculate from bookings
+            "available_spots": event.capacity - occupied_count,
+            "occupied_spots": occupied_count,
             "level_needed": "All Levels",  # TODO: Add to Event model if needed
             "auto_accept": event.auto_accept if event.auto_accept is not None else False,
             "status": event.status.value if event.status else "ACTIVE",
@@ -1720,6 +1731,16 @@ async def get_liked_events(
                 select(func.count(EventLike.user_id)).where(EventLike.event_id == event.id)
             ).scalar_one()
             
+            # Occupied spots: host (1) + confirmed guest bookings
+            guest_count = session.execute(
+                select(func.count(Booking.id))
+                .select_from(Booking)
+                .join(Request, Booking.request_id == Request.id)
+                .where(Request.event_id == event.id)
+                .where(Booking.status == BookingStatus.CONFIRMED)
+            ).scalar() or 0
+            occupied_count = 1 + guest_count
+            
             result.append({
                 "id": event.id,
                 "title": event.title,
@@ -1737,8 +1758,8 @@ async def get_liked_events(
                 "created_by": event.created_by,
                 "host_name": creator.display_name if creator else "Unknown Host",
                 "host_profile_picture": creator.profile_picture if creator else None,
-                "available_spots": event.capacity,
-                "occupied_spots": 0,
+                "available_spots": event.capacity - occupied_count,
+                "occupied_spots": occupied_count,
                 "level_needed": "All Levels",
                 "auto_accept": event.auto_accept if event.auto_accept is not None else False,
                 "status": event.status.value if event.status else "ACTIVE",
@@ -1787,6 +1808,16 @@ async def get_my_events(
                 select(Tag).join(EventTag).where(EventTag.event_id == event.id)
             ).scalars().all()
             
+            # Occupied spots: host (1) + confirmed guest bookings
+            guest_count = session.execute(
+                select(func.count(Booking.id))
+                .select_from(Booking)
+                .join(Request, Booking.request_id == Request.id)
+                .where(Request.event_id == event.id)
+                .where(Booking.status == BookingStatus.CONFIRMED)
+            ).scalar() or 0
+            occupied_count = 1 + guest_count
+            
             result.append({
                 "id": event.id,
                 "title": event.title,
@@ -1804,8 +1835,8 @@ async def get_my_events(
                 "created_by": event.created_by,
                 "host_name": current_user.display_name,  # Current user is the host
                 "host_profile_picture": current_user.profile_picture,
-                "available_spots": event.capacity,
-                "occupied_spots": 0,  # TODO: Calculate from bookings
+                "available_spots": event.capacity - occupied_count,
+                "occupied_spots": occupied_count,
                 "level_needed": "All Levels",  # TODO: Add to Event model if needed
                 "auto_accept": event.auto_accept if event.auto_accept is not None else False,
                 "images": {
@@ -1864,15 +1895,15 @@ async def get_event_by_id(
                 )
             ).scalar_one_or_none() is not None
 
-        # Get occupied spots count (confirmed bookings = joined players)
-        # Booking has no event_id; link via Request
-        occupied_count = session.execute(
+        # Get occupied spots: host (1) + confirmed guest bookings
+        guest_count = session.execute(
             select(func.count(Booking.id))
             .select_from(Booking)
             .join(Request, Booking.request_id == Request.id)
             .where(Request.event_id == event.id)
             .where(Booking.status == BookingStatus.CONFIRMED)
         ).scalar() or 0
+        occupied_count = 1 + guest_count  # host counts as one player
 
         return {
             "id": event.id,
@@ -2380,6 +2411,21 @@ async def get_all_requests(
     except Exception as e:
         raise HTTPException(500, f"Failed to get all requests: {str(e)}")
 
+def _count_confirmed_guests_for_event(session, event_id: str) -> int:
+    """Count confirmed guest bookings for an event. Host is not a guest; capacity - 1 = max guests."""
+    return session.execute(
+        select(func.count(Booking.id))
+        .select_from(Booking)
+        .join(Request, Booking.request_id == Request.id)
+        .where(Request.event_id == event_id)
+        .where(Booking.status == BookingStatus.CONFIRMED)
+    ).scalar() or 0
+
+def _event_has_room_for_one_more_guest(session, event) -> bool:
+    """Event has capacity for one more guest (host occupies one spot)."""
+    guest_count = _count_confirmed_guests_for_event(session, event.id)
+    return guest_count < (event.capacity - 1)
+
 @app.post("/requests")
 async def create_request(
     payload: RequestCreate, 
@@ -2418,6 +2464,9 @@ async def create_request(
 
                  # If auto-accept is enabled or event is auto-accept
                  if req.auto_accept:
+                    # Host occupies one spot; only allow if there is room for one more guest
+                    if not _event_has_room_for_one_more_guest(session, event):
+                        raise HTTPException(400, "Event is full (including host). No more spots available.")
                     req.status = RequestStatus.ACCEPTED
                     
                     # Create booking (check if one exists first to avoid duplicates/errors)
@@ -2487,6 +2536,9 @@ async def create_request(
 
         # auto-accept: immediately create booking and add to group chat
         if req.auto_accept:
+            # Host occupies one spot; only allow if there is room for one more guest
+            if not _event_has_room_for_one_more_guest(session, event):
+                raise HTTPException(400, "Event is full (including host). No more spots available.")
             req.status = RequestStatus.ACCEPTED
             booking = Booking(request_id=req.id, status=BookingStatus.CONFIRMED)
             session.add(booking)
@@ -2583,6 +2635,13 @@ async def act_on_request(
             if req.status != RequestStatus.SUBMITTED:
                 raise HTTPException(400, f"Request is already {req.status.lower()}")
             
+            # Host occupies one spot; only allow if there is room for one more guest
+            event = session.execute(select(Event).where(Event.id == req.event_id)).scalar_one_or_none()
+            if not event:
+                raise HTTPException(404, "Event not found")
+            if not _event_has_room_for_one_more_guest(session, event):
+                raise HTTPException(400, "Event is full (including host). No more spots available.")
+            
             # Check if booking already exists (e.g., from auto-accept or race condition)
             booking = session.execute(
                 select(Booking).where(Booking.request_id == req.id)
@@ -2600,8 +2659,6 @@ async def act_on_request(
                 select(Thread).where(Thread.event_id == req.event_id)
             ).scalar_one_or_none()
             
-            # Get event details for better messages
-            event = session.execute(select(Event).where(Event.id == req.event_id)).scalar_one_or_none()
             event_title = event.title if event else "this event"
             
             if not thread:
