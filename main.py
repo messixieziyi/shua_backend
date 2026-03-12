@@ -1345,6 +1345,7 @@ async def get_user_hosting_events(
             "longitude": event.longitude,
             "created_by": event.created_by,
             "host_name": user.display_name,
+            "host_profile_picture": user.profile_picture,
             "available_spots": event.capacity - occupied_count,
             "occupied_spots": occupied_count,
             "status": event.status,
@@ -1664,6 +1665,7 @@ async def list_events(
             "longitude": event.longitude,
             "created_by": event.created_by,
             "host_name": creator.display_name if creator else "Unknown Host",
+            "host_profile_picture": creator.profile_picture if creator else None,
             "available_spots": event.capacity,
             "occupied_spots": 0,  # TODO: Calculate from bookings
             "level_needed": "All Levels",  # TODO: Add to Event model if needed
@@ -1688,8 +1690,6 @@ async def list_events(
             ]
         })
     
-    return result
-
     return result
 
 @app.get("/events/liked")
@@ -1734,6 +1734,7 @@ async def get_liked_events(
                 "longitude": event.longitude,
                 "created_by": event.created_by,
                 "host_name": creator.display_name if creator else "Unknown Host",
+                "host_profile_picture": creator.profile_picture if creator else None,
                 "available_spots": event.capacity,
                 "occupied_spots": 0,
                 "level_needed": "All Levels",
@@ -1800,6 +1801,7 @@ async def get_my_events(
                 "longitude": event.longitude,
                 "created_by": event.created_by,
                 "host_name": current_user.display_name,  # Current user is the host
+                "host_profile_picture": current_user.profile_picture,
                 "available_spots": event.capacity,
                 "occupied_spots": 0,  # TODO: Calculate from bookings
                 "level_needed": "All Levels",  # TODO: Add to Event model if needed
@@ -1876,6 +1878,7 @@ async def get_event_by_id(
             "longitude": event.longitude,
             "created_by": event.created_by,
             "host_name": creator.display_name if creator else "Unknown Host",
+            "host_profile_picture": creator.profile_picture if creator else None,
             "available_spots": event.capacity,
             "occupied_spots": 0,  # TODO: Calculate from bookings
             "level_needed": "All Levels",  # TODO: Add to Event model if needed
