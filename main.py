@@ -1950,6 +1950,52 @@ async def get_event_by_id(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get event: {str(e)}")
 
+
+class EventParticipantOut(BaseModel):
+    user_id: str
+    display_name: str
+    profile_picture: Optional[str] = None
+    role: str  # "host" | "guest"
+
+
+@app.get("/events/{event_id}/participants", response_model=list[EventParticipantOut])
+async def get_event_participants(
+    event_id: str,
+    session=Depends(get_session)
+):
+    """Get list of participants for an event (host + accepted guests). Public endpoint."""
+    event = session.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    # Host first
+    creator = session.execute(select(User).where(User.id == event.created_by)).scalar_one_or_none()
+    out = []
+    if creator:
+        out.append(EventParticipantOut(
+            user_id=creator.id,
+            display_name=creator.display_name or "Host",
+            profile_picture=creator.profile_picture,
+            role="host"
+        ))
+    # Accepted guests (has CONFIRMED booking)
+    accepted_requests = session.execute(
+        select(Request, User)
+        .join(User, Request.guest_id == User.id)
+        .join(Booking, Request.id == Booking.request_id)
+        .where(Request.event_id == event_id)
+        .where(Request.status == RequestStatus.ACCEPTED)
+        .where(Booking.status == BookingStatus.CONFIRMED)
+    ).all()
+    for req, guest_user in accepted_requests:
+        out.append(EventParticipantOut(
+            user_id=guest_user.id,
+            display_name=guest_user.display_name or "Participant",
+            profile_picture=guest_user.profile_picture,
+            role="guest"
+        ))
+    return out
+
+
 @app.post("/events")
 async def create_event(
     event_data: dict, 
